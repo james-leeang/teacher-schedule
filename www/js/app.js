@@ -287,11 +287,15 @@ async function deleteStudent(id) {
 }
 
 function openCourseForm(course = null) {
-  refreshStudentDatalist();
+  if (students.length === 0) {
+    showToast('请先在「学生」标签页添加学生');
+    return;
+  }
+  populateStudentSelect();
   if (course) {
     modalTitle.textContent = '编辑课程';
     courseIdInput.value = course.id;
-    $('#student-name').value = course.studentName;
+    $('#student-name').value = course.studentId || '';
     courseForm.dataset.studentId = course.studentId || '';
     $('#course-date').value = course.date;
     $('#course-time').value = course.time;
@@ -321,23 +325,27 @@ function openCourseForm(course = null) {
     $('#recurring-options').style.display = 'none';
   }
   showModal(courseModal);
-  setTimeout(() => $('#student-name').focus(), 300);
 }
 
-function refreshStudentDatalist() {
-  const datalist = $('#students-list');
-  if (!datalist) return;
-  datalist.innerHTML = '';
-  students.forEach(s => {
+function populateStudentSelect() {
+  const select = $('#student-name');
+  select.innerHTML = '<option value="">-- 请选择学生 --</option>';
+  students.sort((a, b) => a.name.localeCompare(b.name, 'zh')).forEach(s => {
     const opt = document.createElement('option');
-    opt.value = s.name;
-    datalist.appendChild(opt);
+    opt.value = s.id;
+    opt.textContent = s.name;
+    select.appendChild(opt);
   });
 }
 
 $('#add-btn').addEventListener('click', () => {
-  if (currentView === 'student') openStudentForm();
-  else openCourseForm();
+  if (currentView === 'student') {
+    openStudentForm();
+  } else if (currentView === 'list' && students.length === 0) {
+    showToast('请先在「学生」标签页添加学生');
+  } else {
+    openCourseForm();
+  }
 });
 $('#btn-cancel').addEventListener('click', () => hideModal(courseModal));
 $('#student-btn-cancel').addEventListener('click', () => hideModal(studentModal));
@@ -354,15 +362,16 @@ $('#course-recurring').addEventListener('change', function() {
 courseForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const duration = parseInt($('#course-duration').value) || 60;
-  const studentName = $('#student-name').value.trim();
-  let studentId = courseForm.dataset.studentId || '';
-  if (!studentId && studentName) {
-    const existingStudent = students.find(s => s.name === studentName);
-    if (existingStudent) studentId = existingStudent.id;
+  const studentId = $('#student-name').value;
+  if (!studentId) {
+    showToast('请选择一个学生');
+    return;
   }
+  const student = students.find(s => s.id === studentId);
+  const studentName = student ? student.name : '';
 
-  if (!studentName || !$('#course-date').value || !$('#course-time').value) {
-    showToast('请填写学生姓名、日期和时间');
+  if (!$('#course-date').value || !$('#course-time').value) {
+    showToast('请填写日期和时间');
     return;
   }
 

@@ -161,9 +161,10 @@
       <form id="course-form">
         <input type="hidden" id="course-id">
         <div class="form-group">
-          <label for="student-name">学生姓名 *</label>
-          <input type="text" id="student-name" required placeholder="输入学生姓名" autocomplete="off" list="students-list">
-          <datalist id="students-list"></datalist>
+          <label for="student-name">选择学生 *</label>
+          <select id="student-name" required>
+            <option value="">-- 请先添加学生 --</option>
+          </select>
         </div>
         <div class="form-row">
           <div class="form-group">
