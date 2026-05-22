@@ -597,23 +597,32 @@ button, input, textarea, select {
 .week-slot-cell {
   border-bottom: 1px solid #f0f0f0;
   border-left: 1px solid #f5f5f5;
-  min-height: 22px;
-  font-size: 9px;
-  padding: 1px 2px;
+  min-height: 36px;
+  font-size: 11px;
+  padding: 3px 4px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  transition: background 0.15s;
+  border-radius: 2px;
 }
 
-.week-slot-cell.occupied {
-  background: #FFF2F0;
+.week-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 8px;
+  background: var(--card-bg);
+  border-radius: var(--radius-sm);
 }
 
-.week-slot-cell.course-start {
-  background: var(--primary-light);
-  color: var(--primary-dark);
-  font-weight: 500;
+.legend-item {
   font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 
 /* ===== Checkbox Label ===== */

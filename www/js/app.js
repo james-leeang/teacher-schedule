@@ -600,7 +600,7 @@ function renderStudentCourseList() {
   const student = students.find(s => s.id === selectedStudentId);
   if (!student) return;
   const studentCourses = getStudentCourses(student)
-    .sort((a, b) => b.dateTime.localeCompare(a.dateTime));
+    .sort((a, b) => a.dateTime.localeCompare(b.dateTime));
 
   studentCourseList.innerHTML = '';
 
@@ -898,13 +898,32 @@ function renderWeekView() {
   const weekGrid = $('#week-grid');
   weekGrid.innerHTML = '';
 
+  const studentColors = {};
+  const colorPalette = [
+    '#E3F2FD', '#FCE4EC', '#E8F5E9', '#FFF3E0', '#F3E5F5',
+    '#E0F7FA', '#FFF8E1', '#EDE7F6', '#F1F8E9', '#FFEBEE',
+    '#E8EAF6', '#FBE9E7', '#E0F2F1', '#FFF9C4', '#D1C4E9'
+  ];
+  const textPalette = [
+    '#1565C0', '#C62828', '#2E7D32', '#E65100', '#7B1FA2',
+    '#00695C', '#F57F17', '#4527A0', '#33691E', '#B71C1C',
+    '#283593', '#BF360C', '#004D40', '#F9A825', '#4A148C'
+  ];
+
+  students.forEach((s, i) => {
+    studentColors[s.id] = {
+      bg: colorPalette[i % colorPalette.length],
+      text: textPalette[i % textPalette.length]
+    };
+  });
+
+  // 1-hour slots from 7:00 to 22:00
   const hours = [];
-  for (let h = 7; h <= 22; h++) {
+  for (let h = 7; h <= 21; h++) {
     hours.push(`${String(h).padStart(2, '0')}:00`);
-    hours.push(`${String(h).padStart(2, '0')}:30`);
   }
 
-  // Header row: empty + Mon-Sun
+  // Header row
   let html = '<div class="week-header-cell"></div>';
   const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
   dayLabels.forEach(d => {
@@ -912,8 +931,7 @@ function renderWeekView() {
   });
   weekGrid.innerHTML = html;
 
-  // Time slot rows
-  const weekDays = [1, 2, 3, 4, 5, 6, 0]; // Mon=1, Sun=0
+  const weekDays = [1, 2, 3, 4, 5, 6, 0];
 
   hours.forEach(timeSlot => {
     const row = document.createElement('div');
@@ -924,40 +942,45 @@ function renderWeekView() {
     weekDays.forEach(dayOfWeek => {
       const cell = document.createElement('div');
       cell.className = 'week-slot-cell';
-      cell.dataset.day = dayOfWeek;
-      cell.dataset.time = timeSlot;
 
-      // Check if any course occupies this slot
-      const hasCourse = courses.some(c => {
+      // Find courses starting in this hour slot
+      const slotEnd = calculateEndTime(timeSlot, 60);
+      const slotCourses = courses.filter(c => {
         if (c.status === 'cancelled') return false;
         const courseDate = new Date(c.date + 'T00:00:00');
         if (courseDate.getDay() !== dayOfWeek) return false;
-        const courseStart = c.time;
         const courseEnd = calculateEndTime(c.time, c.duration);
-        return timeSlot >= courseStart && timeSlot < courseEnd;
+        return c.time >= timeSlot && c.time < slotEnd;
       });
 
-      if (hasCourse) {
-        cell.classList.add('occupied');
-        cell.title = '有课程安排';
-      }
-
-      // Find courses at this exact start time
-      const startCourses = courses.filter(c => {
-        if (c.status === 'cancelled') return false;
-        const courseDate = new Date(c.date + 'T00:00:00');
-        return courseDate.getDay() === dayOfWeek && c.time === timeSlot;
-      });
-
-      if (startCourses.length > 0) {
-        cell.classList.add('course-start');
-        cell.textContent = startCourses.map(c => c.studentName).join(',');
-        cell.title = startCourses.map(c => `${c.studentName} ${c.time}-${calculateEndTime(c.time, c.duration)}`).join('\n');
+      if (slotCourses.length > 0) {
+        const sid = slotCourses[0].studentId;
+        const colors = studentColors[sid] || { bg: '#E3F2FD', text: '#1565C0' };
+        cell.style.background = colors.bg;
+        cell.style.color = colors.text;
+        cell.style.fontWeight = '600';
+        cell.textContent = slotCourses.map(c => c.studentName).join(',');
+        cell.title = slotCourses.map(c =>
+          `${c.studentName} ${c.time}-${calculateEndTime(c.time, c.duration)}`
+        ).join('\n');
       }
 
       weekGrid.appendChild(cell);
     });
   });
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.className = 'week-legend';
+  legend.innerHTML = '<span style="font-size:11px;color:#999;margin-right:8px;">学生颜色：</span>';
+  students.slice(0, 8).forEach(s => {
+    const colors = studentColors[s.id];
+    legend.innerHTML += `<span class="legend-item" style="background:${colors.bg};color:${colors.text}">${escapeHtml(s.name)}</span>`;
+  });
+  if (students.length > 8) {
+    legend.innerHTML += `<span style="font-size:10px;color:#999;">+${students.length - 8}人</span>`;
+  }
+  weekGrid.parentElement.appendChild(legend);
 }
 
 /* ===== Statistics View ===== */
