@@ -301,6 +301,9 @@ function openCourseForm(course = null) {
     $('#course-notes').value = course.notes || '';
     courseForm.dataset.mode = 'edit';
     courseForm.dataset.feedbackSent = course.feedbackSent ? '1' : '0';
+    $('#course-recurring').checked = false;
+    $('#course-recurring').parentElement.parentElement.style.display = 'none';
+    $('#recurring-options').style.display = 'none';
   } else {
     modalTitle.textContent = '添加课程';
     courseForm.reset();
@@ -313,6 +316,9 @@ function openCourseForm(course = null) {
     $('#course-status').value = 'pending';
     courseForm.dataset.mode = 'add';
     courseForm.dataset.feedbackSent = '0';
+    $('#course-recurring').checked = false;
+    $('#course-recurring').parentElement.parentElement.style.display = '';
+    $('#recurring-options').style.display = 'none';
   }
   showModal(courseModal);
   setTimeout(() => $('#student-name').focus(), 300);
@@ -341,6 +347,10 @@ $('#course-duration').addEventListener('input', () => {
   $('#course-fee').value = calcFee(d);
 });
 
+$('#course-recurring').addEventListener('change', function() {
+  $('#recurring-options').style.display = this.checked ? 'block' : 'none';
+});
+
 courseForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const duration = parseInt($('#course-duration').value) || 60;
@@ -350,31 +360,45 @@ courseForm.addEventListener('submit', async (e) => {
     const existingStudent = students.find(s => s.name === studentName);
     if (existingStudent) studentId = existingStudent.id;
   }
-  const data = {
-    id: courseIdInput.value,
-    studentId: studentId,
-    studentName: studentName,
-    date: $('#course-date').value,
-    time: $('#course-time').value,
-    duration: duration,
-    fee: calcFee(duration),
-    status: $('#course-status').value,
-    feedbackSent: courseForm.dataset.feedbackSent === '1',
-    notes: $('#course-notes').value
-  };
 
-  if (!data.studentName || !data.date || !data.time) {
+  if (!studentName || !$('#course-date').value || !$('#course-time').value) {
     showToast('请填写学生姓名、日期和时间');
     return;
   }
 
-  const existing = courseForm.dataset.mode === 'edit' ? courses.find(c => c.id === data.id) : null;
-  data.createdAt = existing ? existing.createdAt : new Date().toISOString();
+  const isRecurring = $('#course-recurring').checked && courseForm.dataset.mode === 'add';
+  const repeatWeeks = isRecurring ? (parseInt($('#course-repeat-weeks').value) || 4) : 1;
+  const baseDate = $('#course-date').value;
+  const baseTime = $('#course-time').value;
+  const baseStatus = $('#course-status').value;
+  const baseNotes = $('#course-notes').value;
+  const fbSent = courseForm.dataset.feedbackSent === '1';
 
   try {
-    await saveCourse(data);
+    for (let i = 0; i < repeatWeeks; i++) {
+      const d = new Date(baseDate);
+      d.setDate(d.getDate() + i * 7);
+      const dateStr = formatDate(d);
+      const courseData = {
+        studentId: studentId,
+        studentName: studentName,
+        date: dateStr,
+        time: baseTime,
+        duration: duration,
+        status: baseStatus,
+        feedbackSent: fbSent,
+        notes: baseNotes,
+        createdAt: new Date().toISOString()
+      };
+      if (i === 0 && courseForm.dataset.mode === 'edit') {
+        courseData.id = courseIdInput.value;
+        const existing = courses.find(c => c.id === courseData.id);
+        if (existing) courseData.createdAt = existing.createdAt;
+      }
+      await saveCourse(courseData);
+    }
     hideModal(courseModal);
-    showToast(courseForm.dataset.mode === 'edit' ? '课程已更新' : '课程已添加');
+    showToast(isRecurring ? `已添加 ${repeatWeeks} 周重复课程` : (courseForm.dataset.mode === 'edit' ? '课程已更新' : '课程已添加'));
     refreshCurrentView();
   } catch (err) {
     console.error('Save failed:', err);
@@ -501,6 +525,14 @@ async function toggleCourseFeedback(id) {
 }
 
 /* ===== Student View ===== */
+function getStudentCourses(student) {
+  return courses.filter(c => {
+    if (c.studentId && c.studentId === student.id) return true;
+    if (!c.studentId && c.studentName === student.name) return true;
+    return false;
+  });
+}
+
 function renderStudentList() {
   studentList.innerHTML = '';
   if (students.length === 0) {
@@ -510,7 +542,7 @@ function renderStudentList() {
   studentEmpty.classList.remove('visible');
 
   students.sort((a, b) => a.name.localeCompare(b.name, 'zh')).forEach(student => {
-    const studentCourses = courses.filter(c => c.studentId === student.id);
+    const studentCourses = getStudentCourses(student);
     const totalFee = studentCourses
       .filter(c => c.status !== 'cancelled')
       .reduce((sum, c) => sum + (c.fee || 0), 0);
@@ -556,8 +588,9 @@ function showStudentCourses(studentId, studentName) {
 }
 
 function renderStudentCourseList() {
-  const studentCourses = courses
-    .filter(c => c.studentId === selectedStudentId)
+  const student = students.find(s => s.id === selectedStudentId);
+  if (!student) return;
+  const studentCourses = getStudentCourses(student)
     .sort((a, b) => b.dateTime.localeCompare(a.dateTime));
 
   studentCourseList.innerHTML = '';
@@ -823,6 +856,100 @@ $('#cal-today').addEventListener('click', () => {
   renderCalendar();
   renderDayCourses(selectedDay);
 });
+
+/* ===== Week View ===== */
+let calViewMode = 'month';
+
+$('#view-month-btn').addEventListener('click', () => {
+  calViewMode = 'month';
+  $('#view-month-btn').classList.add('active');
+  $('#view-week-btn').classList.remove('active');
+  $('#month-view').style.display = 'block';
+  $('#week-view').style.display = 'none';
+  $('#cal-prev').style.display = '';
+  $('#cal-next').style.display = '';
+  $('#cal-today').style.display = '';
+  renderCalendar();
+});
+
+$('#view-week-btn').addEventListener('click', () => {
+  calViewMode = 'week';
+  $('#view-week-btn').classList.add('active');
+  $('#view-month-btn').classList.remove('active');
+  $('#month-view').style.display = 'none';
+  $('#week-view').style.display = 'block';
+  $('#cal-prev').style.display = 'none';
+  $('#cal-next').style.display = 'none';
+  $('#cal-today').style.display = 'none';
+  calMonthLabel.textContent = '一周课程安排';
+  renderWeekView();
+});
+
+function renderWeekView() {
+  const weekGrid = $('#week-grid');
+  weekGrid.innerHTML = '';
+
+  const hours = [];
+  for (let h = 7; h <= 22; h++) {
+    hours.push(`${String(h).padStart(2, '0')}:00`);
+    hours.push(`${String(h).padStart(2, '0')}:30`);
+  }
+
+  // Header row: empty + Mon-Sun
+  let html = '<div class="week-header-cell"></div>';
+  const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  dayLabels.forEach(d => {
+    html += `<div class="week-header-cell">${d}</div>`;
+  });
+  weekGrid.innerHTML = html;
+
+  // Time slot rows
+  const weekDays = [1, 2, 3, 4, 5, 6, 0]; // Mon=1, Sun=0
+
+  hours.forEach(timeSlot => {
+    const row = document.createElement('div');
+    row.className = 'week-time-cell';
+    row.textContent = timeSlot;
+    weekGrid.appendChild(row);
+
+    weekDays.forEach(dayOfWeek => {
+      const cell = document.createElement('div');
+      cell.className = 'week-slot-cell';
+      cell.dataset.day = dayOfWeek;
+      cell.dataset.time = timeSlot;
+
+      // Check if any course occupies this slot
+      const hasCourse = courses.some(c => {
+        if (c.status === 'cancelled') return false;
+        const courseDate = new Date(c.date + 'T00:00:00');
+        if (courseDate.getDay() !== dayOfWeek) return false;
+        const courseStart = c.time;
+        const courseEnd = calculateEndTime(c.time, c.duration);
+        return timeSlot >= courseStart && timeSlot < courseEnd;
+      });
+
+      if (hasCourse) {
+        cell.classList.add('occupied');
+        cell.title = '有课程安排';
+      }
+
+      // Find courses at this exact start time
+      const startCourses = courses.filter(c => {
+        if (c.status === 'cancelled') return false;
+        const courseDate = new Date(c.date + 'T00:00:00');
+        return courseDate.getDay() === dayOfWeek && c.time === timeSlot;
+      });
+
+      if (startCourses.length > 0) {
+        cell.classList.add('course-start');
+        cell.textContent = startCourses.map(c => c.studentName).join(',');
+        cell.title = startCourses.map(c => `${c.studentName} ${c.time}-${calculateEndTime(c.time, c.duration)}`).join('\n');
+      }
+
+      weekGrid.appendChild(cell);
+    });
+  });
+}
 
 /* ===== Statistics View ===== */
 function renderStats() {

@@ -50,10 +50,19 @@
           <button id="cal-next" aria-label="下个月">&gt;</button>
           <button id="cal-today" class="btn-today">今天</button>
         </div>
-        <div class="calendar-weekdays">
-          <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+        <div class="view-toggle">
+          <button id="view-month-btn" class="view-toggle-btn active">月视图</button>
+          <button id="view-week-btn" class="view-toggle-btn">周视图</button>
         </div>
-        <div id="calendar-grid" class="calendar-grid"></div>
+        <div id="month-view">
+          <div class="calendar-weekdays">
+            <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+          </div>
+          <div id="calendar-grid" class="calendar-grid"></div>
+        </div>
+        <div id="week-view" style="display:none;">
+          <div id="week-grid" class="week-grid"></div>
+        </div>
         <div id="day-courses" class="day-courses">
           <h3 id="day-courses-title">选择日期查看课程</h3>
           <div id="day-courses-list"></div>
@@ -183,6 +192,17 @@
             <option value="completed">已完成</option>
             <option value="cancelled">已取消</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="course-recurring">
+            <span>每周重复课程</span>
+          </label>
+          <div id="recurring-options" style="display:none; margin-top: 8px;">
+            <label for="course-repeat-weeks">重复周数</label>
+            <input type="number" id="course-repeat-weeks" value="4" min="1" max="52" step="1" style="width:80px;">
+            <span class="auto-hint" style="margin-left: 8px;">从选定日期开始，每周同一时间</span>
+          </div>
         </div>
         <div class="form-group">
           <label for="course-notes">备注</label>
