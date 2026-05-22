@@ -1081,6 +1081,19 @@ async function requestNotificationPermission() {
   }
 }
 
+function sendNotification(title, body) {
+  if (notificationPermission !== 'granted') return;
+  try {
+    new Notification(title, {
+      body: body,
+      requireInteraction: true,
+      silent: false
+    });
+  } catch (e) {
+    // Notification API not available
+  }
+}
+
 function checkUpcomingCourses() {
   if (notificationPermission !== 'granted') return;
 
@@ -1094,28 +1107,42 @@ function checkUpcomingCourses() {
     const courseTime = courseDateTime.getTime();
     const diffMinutes = (courseTime - nowTime) / 60000;
 
-    // Remind 15 minutes before
-    if (diffMinutes > 0 && diffMinutes <= 15) {
-      const key = `reminded_${course.id}_${course.dateTime}`;
-      if (sessionStorage.getItem(key)) return;
+    // Reminder 1: Night before class day at 8:00 PM
+    if (diffMinutes > 0) {
+      const eveningKey = `reminded_evening_${course.id}_${course.date}`;
+      if (!sessionStorage.getItem(eveningKey)) {
+        const eveningBefore = new Date(course.date + 'T20:00:00');
+        eveningBefore.setDate(eveningBefore.getDate() - 1);
+        if (nowTime >= eveningBefore.getTime()) {
+          sendNotification('📅 明天有课',
+            `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}`);
+          sessionStorage.setItem(eveningKey, '1');
+        }
+      }
+    }
 
-      new Notification('课程提醒', {
-        body: `${course.studentName} - ${course.date} ${formatTime(course.time)}\n还有约${Math.round(diffMinutes)}分钟开始`,
-        tag: key,
-        requireInteraction: true,
-        silent: false
-      });
-
-      sessionStorage.setItem(key, '1');
+    // Reminder 2: 1 hour before class
+    const oneHourKey = `reminded_1h_${course.id}_${course.dateTime}`;
+    if (diffMinutes > 0 && diffMinutes <= 60 && !sessionStorage.getItem(oneHourKey)) {
+      sendNotification('⏰ 课程即将开始',
+        `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}\n还有约${Math.round(diffMinutes)}分钟开始`);
+      sessionStorage.setItem(oneHourKey, '1');
     }
   });
+
+  // Clean old session keys (keep last 100 courses worth)
+  const keys = Object.keys(sessionStorage);
+  const remindKeys = keys.filter(k => k.startsWith('reminded_'));
+  if (remindKeys.length > 200) {
+    remindKeys.slice(0, 100).forEach(k => sessionStorage.removeItem(k));
+  }
 }
 
 function startReminderService() {
   requestNotificationPermission();
   checkUpcomingCourses();
   if (reminderInterval) clearInterval(reminderInterval);
-  reminderInterval = setInterval(checkUpcomingCourses, 30000); // Every 30 seconds
+  reminderInterval = setInterval(checkUpcomingCourses, 60000); // Every 60 seconds
 }
 
 /* ===== Service Worker Registration ===== */
