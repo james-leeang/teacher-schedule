@@ -88,6 +88,12 @@ function calcFee(durationMinutes) {
   return Math.round((durationMinutes / 60) * 70 * 100) / 100;
 }
 
+function getDayOfWeek(dateStr) {
+  const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const d = new Date(dateStr + 'T00:00:00');
+  return days[d.getDay()];
+}
+
 function formatDateTime(dateStr, timeStr) {
   return `${formatDate(dateStr)} ${formatTime(timeStr || '00:00')}`;
 }
@@ -455,7 +461,7 @@ function renderCourseList() {
         </div>
       </div>
       <div class="course-datetime">
-        <span>📅 ${course.date}</span>
+        <span>📅 ${course.date} ${getDayOfWeek(course.date)}</span>
         <span>🕐 ${formatTime(course.time)}-${endTime}</span>
       </div>
       <div class="course-info-row">
@@ -622,7 +628,7 @@ function renderStudentCourseList() {
         </div>
       </div>
       <div class="course-datetime">
-        <span>📅 ${course.date}</span>
+        <span>📅 ${course.date} ${getDayOfWeek(course.date)}</span>
         <span>🕐 ${formatTime(course.time)}-${endTime}</span>
       </div>
       <div class="course-info-row">
