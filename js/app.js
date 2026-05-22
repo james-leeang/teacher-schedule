@@ -712,17 +712,27 @@ studentForm.addEventListener('submit', async (e) => {
 });
 
 function confirmDeleteStudent(student) {
-  const studentCourses = courses.filter(c => c.studentId === student.id);
+  const studentCourses = getStudentCourses(student);
   let msg = `确定要删除学生「${student.name}」吗？`;
   if (studentCourses.length > 0) {
-    msg += `\n该学生有 ${studentCourses.length} 条课程记录，删除学生后课程仍会保留。`;
+    msg += `\n该学生的 ${studentCourses.length} 条课程记录也将一并删除。`;
   }
   if (confirm(msg)) {
-    deleteStudent(student.id).then(() => {
-      showToast('学生已删除');
-      renderStudentList();
+    deleteStudentCourses(student).then(() => {
+      deleteStudent(student.id).then(() => {
+        showToast('学生及课程已删除');
+        renderStudentList();
+      });
     });
   }
+}
+
+async function deleteStudentCourses(student) {
+  const studentCourses = getStudentCourses(student);
+  for (const course of studentCourses) {
+    await dbDelete(db, COURSE_STORE, course.id);
+  }
+  await loadCourses();
 }
 
 /* ===== Calendar View ===== */
@@ -1142,8 +1152,33 @@ function startReminderService() {
   requestNotificationPermission();
   checkUpcomingCourses();
   if (reminderInterval) clearInterval(reminderInterval);
-  reminderInterval = setInterval(checkUpcomingCourses, 60000); // Every 60 seconds
+  reminderInterval = setInterval(checkUpcomingCourses, 60000);
 }
+
+$('#test-notify-btn').addEventListener('click', async () => {
+  if (!('Notification' in window)) {
+    showToast('此浏览器不支持通知功能');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    notificationPermission = 'granted';
+    new Notification('📅 明天有课', {
+      body: '张三\n2026-05-23 08:00-09:00',
+      requireInteraction: true
+    });
+    setTimeout(() => {
+      new Notification('⏰ 课程即将开始', {
+        body: '张三\n2026-05-23 08:00-09:00\n还有约60分钟开始',
+        requireInteraction: true
+      });
+    }, 500);
+    showToast('已发送测试通知，请查看右下角');
+  } else {
+    notificationPermission = perm;
+    showToast('通知权限被拒绝，file://可能受限，APK里正常');
+  }
+});
 
 /* ===== Service Worker Registration ===== */
 if ('serviceWorker' in navigator) {
