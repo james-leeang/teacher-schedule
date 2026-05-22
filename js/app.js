@@ -1155,31 +1155,6 @@ function startReminderService() {
   reminderInterval = setInterval(checkUpcomingCourses, 60000);
 }
 
-$('#test-notify-btn').addEventListener('click', async () => {
-  if (!('Notification' in window)) {
-    showToast('此浏览器不支持通知功能');
-    return;
-  }
-  const perm = await Notification.requestPermission();
-  if (perm === 'granted') {
-    notificationPermission = 'granted';
-    new Notification('📅 明天有课', {
-      body: '张三\n2026-05-23 08:00-09:00',
-      requireInteraction: true
-    });
-    setTimeout(() => {
-      new Notification('⏰ 课程即将开始', {
-        body: '张三\n2026-05-23 08:00-09:00\n还有约60分钟开始',
-        requireInteraction: true
-      });
-    }, 500);
-    showToast('已发送测试通知，请查看右下角');
-  } else {
-    notificationPermission = perm;
-    showToast('通知权限被拒绝，file://可能受限，APK里正常');
-  }
-});
-
 /* ===== Service Worker Registration ===== */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
