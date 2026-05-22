@@ -33,8 +33,10 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Set npm mirror
-        run: npm config set registry https://mirrors.cloud.tencent.com/npm/
+      - name: Reset npm to official registry
+        run: |
+          rm -f ~/.npmrc /etc/npmrc
+          npm config set registry https://registry.npmjs.org/
 
       - name: Install dependencies
         run: npm install
