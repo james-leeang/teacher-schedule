@@ -1,0 +1,23 @@
+{
+  "name": "英语老师课程管理",
+  "short_name": "课程管理",
+  "description": "一个帮助英语老师管理课程安排的App",
+  "start_url": "index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#4A90D9",
+  "background_color": "#F5F7FA",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
