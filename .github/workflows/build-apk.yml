@@ -34,7 +34,7 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --registry=https://registry.npmjs.org
 
       - name: Sync Capacitor
         run: npx cap sync android
