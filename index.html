@@ -100,6 +100,25 @@
           <div id="monthly-breakdown"></div>
         </div>
       </section>
+
+      <!-- 学生视图 -->
+      <section id="student-view" class="view">
+        <div id="student-list" class="student-list"></div>
+        <div id="student-empty" class="empty-state">
+          <div class="empty-icon">👨‍🎓</div>
+          <p>还没有添加学生</p>
+          <p>点击右下角 + 添加学生</p>
+        </div>
+      </section>
+
+      <!-- 学生课程视图 -->
+      <section id="student-course-view" class="view">
+        <div class="student-course-header">
+          <button id="student-back-btn" class="back-btn">&lt; 返回学生列表</button>
+          <h3 id="student-course-title"></h3>
+        </div>
+        <div id="student-course-list"></div>
+      </section>
     </main>
 
     <nav id="tab-bar">
@@ -114,6 +133,10 @@
       <button class="tab" data-view="stats">
         <span class="tab-icon">📊</span>
         <span class="tab-label">统计</span>
+      </button>
+      <button class="tab" data-view="student">
+        <span class="tab-icon">👨‍🎓</span>
+        <span class="tab-label">学生</span>
       </button>
     </nav>
   </div>
@@ -130,7 +153,8 @@
         <input type="hidden" id="course-id">
         <div class="form-group">
           <label for="student-name">学生姓名 *</label>
-          <input type="text" id="student-name" required placeholder="输入学生姓名" autocomplete="off">
+          <input type="text" id="student-name" required placeholder="输入学生姓名" autocomplete="off" list="students-list">
+          <datalist id="students-list"></datalist>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -167,6 +191,36 @@
         <div class="form-actions">
           <button type="button" id="btn-cancel" class="btn btn-secondary">取消</button>
           <button type="submit" id="btn-save" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 学生表单弹窗 -->
+  <div id="student-modal" class="modal">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="student-modal-title">添加学生</h2>
+        <button class="modal-close" aria-label="关闭">&times;</button>
+      </div>
+      <form id="student-form">
+        <input type="hidden" id="student-id">
+        <div class="form-group">
+          <label for="student-name-input">学生姓名 *</label>
+          <input type="text" id="student-name-input" required placeholder="输入学生姓名" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="student-phone">电话</label>
+          <input type="tel" id="student-phone" placeholder="输入电话号码">
+        </div>
+        <div class="form-group">
+          <label for="student-notes-input">备注</label>
+          <textarea id="student-notes-input" rows="2" placeholder="添加备注信息..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="student-btn-cancel" class="btn btn-secondary">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
         </div>
       </form>
     </div>

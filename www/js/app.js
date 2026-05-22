@@ -1,17 +1,29 @@
 /* ===== Database Layer ===== */
 const DB_NAME = 'TeacherSchedule';
-const DB_VERSION = 1;
-const STORE_NAME = 'courses';
+const DB_VERSION = 2;
+const COURSE_STORE = 'courses';
+const STUDENT_STORE = 'students';
 
 function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('dateTime', 'dateTime', { unique: false });
-        store.createIndex('status', 'status', { unique: false });
+      if (!db.objectStoreNames.contains(COURSE_STORE)) {
+        const courseStore = db.createObjectStore(COURSE_STORE, { keyPath: 'id' });
+        courseStore.createIndex('dateTime', 'dateTime', { unique: false });
+        courseStore.createIndex('status', 'status', { unique: false });
+        courseStore.createIndex('studentId', 'studentId', { unique: false });
+      } else if (e.oldVersion < 2) {
+        const tx = e.target.transaction;
+        const courseStore = tx.objectStore(COURSE_STORE);
+        if (!courseStore.indexNames.contains('studentId')) {
+          courseStore.createIndex('studentId', 'studentId', { unique: false });
+        }
+      }
+      if (!db.objectStoreNames.contains(STUDENT_STORE)) {
+        const studentStore = db.createObjectStore(STUDENT_STORE, { keyPath: 'id' });
+        studentStore.createIndex('name', 'name', { unique: false });
       }
     };
     request.onsuccess = (e) => resolve(e.target.result);
@@ -19,30 +31,30 @@ function openDB() {
   });
 }
 
-function dbPut(db, course) {
+function dbPut(db, storeName, obj) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.put(course);
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
+    const request = store.put(obj);
     request.onsuccess = () => resolve();
     request.onerror = (e) => reject(e.target.error);
   });
 }
 
-function dbDelete(db, id) {
+function dbDelete(db, storeName, id) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(storeName, 'readwrite');
+    const store = tx.objectStore(storeName);
     const request = store.delete(id);
     request.onsuccess = () => resolve();
     request.onerror = (e) => reject(e.target.error);
   });
 }
 
-function dbGetAll(db) {
+function dbGetAll(db, storeName) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(storeName, 'readonly');
+    const store = tx.objectStore(storeName);
     const request = store.getAll();
     request.onsuccess = () => resolve(request.result);
     request.onerror = (e) => reject(e.target.error);
@@ -111,9 +123,11 @@ function showToast(msg, duration = 2000) {
 /* ===== App State ===== */
 let db = null;
 let courses = [];
+let students = [];
 let currentView = 'list';
 let calendarYear, calendarMonth;
 let selectedDay = null;
+let selectedStudentId = null;
 
 /* ===== DOM Elements ===== */
 const $ = (sel) => document.querySelector(sel);
@@ -122,9 +136,18 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const listView = $('#list-view');
 const calendarView = $('#calendar-view');
 const statsView = $('#stats-view');
+const studentView = $('#student-view');
+const studentCourseView = $('#student-course-view');
 const courseList = $('#course-list');
 const emptyState = $('#empty-state');
+const studentList = $('#student-list');
+const studentEmpty = $('#student-empty');
+const studentCourseList = $('#student-course-list');
+const studentCourseTitle = $('#student-course-title');
+const studentBackBtn = $('#student-back-btn');
 const courseModal = $('#course-modal');
+const studentModal = $('#student-modal');
+const studentForm = $('#student-form');
 const dayModal = $('#day-modal');
 const courseForm = $('#course-form');
 const modalTitle = $('#modal-title');
@@ -154,6 +177,7 @@ function switchView(viewName) {
     listView.classList.add('active');
     document.querySelector('[data-view="list"]').classList.add('active');
     $('#header-title').textContent = '课程管理';
+    selectedStudentId = null;
     renderCourseList();
   } else if (viewName === 'calendar') {
     calendarView.classList.add('active');
@@ -166,6 +190,11 @@ function switchView(viewName) {
     document.querySelector('[data-view="stats"]').classList.add('active');
     $('#header-title').textContent = '课程统计';
     renderStats();
+  } else if (viewName === 'student') {
+    studentView.classList.add('active');
+    document.querySelector('[data-view="student"]').classList.add('active');
+    $('#header-title').textContent = '学生管理';
+    renderStudentList();
   }
 }
 
@@ -184,6 +213,7 @@ function hideModal(modalEl) {
 $$('.modal-backdrop').forEach(bd => {
   bd.addEventListener('click', () => {
     hideModal(courseModal);
+    hideModal(studentModal);
     hideModal(dayModal);
   });
 });
@@ -191,6 +221,7 @@ $$('.modal-backdrop').forEach(bd => {
 $$('.modal-close').forEach(btn => {
   btn.addEventListener('click', () => {
     hideModal(courseModal);
+    hideModal(studentModal);
     hideModal(dayModal);
   });
 });
@@ -198,7 +229,12 @@ $$('.modal-close').forEach(btn => {
 /* ===== Course CRUD ===== */
 async function loadCourses() {
   if (!db) db = await openDB();
-  courses = await dbGetAll(db);
+  courses = await dbGetAll(db, COURSE_STORE);
+}
+
+async function loadStudents() {
+  if (!db) db = await openDB();
+  students = await dbGetAll(db, STUDENT_STORE);
 }
 
 async function saveCourse(courseData) {
@@ -206,6 +242,7 @@ async function saveCourse(courseData) {
   const duration = parseInt(courseData.duration) || 60;
   const course = {
     id: courseData.id || generateId(),
+    studentId: courseData.studentId || '',
     studentName: courseData.studentName.trim(),
     date: courseData.date,
     time: courseData.time,
@@ -217,22 +254,45 @@ async function saveCourse(courseData) {
     notes: courseData.notes.trim(),
     createdAt: courseData.createdAt || new Date().toISOString()
   };
-  await dbPut(db, course);
+  await dbPut(db, COURSE_STORE, course);
   await loadCourses();
   return course;
 }
 
 async function deleteCourse(id) {
   if (!db) db = await openDB();
-  await dbDelete(db, id);
+  await dbDelete(db, COURSE_STORE, id);
   await loadCourses();
 }
 
+/* ===== Student CRUD ===== */
+async function saveStudent(studentData) {
+  if (!db) db = await openDB();
+  const student = {
+    id: studentData.id || generateId(),
+    name: studentData.name.trim(),
+    phone: studentData.phone ? studentData.phone.trim() : '',
+    notes: studentData.notes ? studentData.notes.trim() : '',
+    createdAt: studentData.createdAt || new Date().toISOString()
+  };
+  await dbPut(db, STUDENT_STORE, student);
+  await loadStudents();
+  return student;
+}
+
+async function deleteStudent(id) {
+  if (!db) db = await openDB();
+  await dbDelete(db, STUDENT_STORE, id);
+  await loadStudents();
+}
+
 function openCourseForm(course = null) {
+  refreshStudentDatalist();
   if (course) {
     modalTitle.textContent = '编辑课程';
     courseIdInput.value = course.id;
     $('#student-name').value = course.studentName;
+    courseForm.dataset.studentId = course.studentId || '';
     $('#course-date').value = course.date;
     $('#course-time').value = course.time;
     $('#course-duration').value = course.duration;
@@ -245,6 +305,7 @@ function openCourseForm(course = null) {
     modalTitle.textContent = '添加课程';
     courseForm.reset();
     courseIdInput.value = '';
+    courseForm.dataset.studentId = '';
     $('#course-date').value = todayStr();
     $('#course-time').value = '08:00';
     $('#course-duration').value = '60';
@@ -257,8 +318,23 @@ function openCourseForm(course = null) {
   setTimeout(() => $('#student-name').focus(), 300);
 }
 
-$('#add-btn').addEventListener('click', () => openCourseForm());
+function refreshStudentDatalist() {
+  const datalist = $('#students-list');
+  if (!datalist) return;
+  datalist.innerHTML = '';
+  students.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.name;
+    datalist.appendChild(opt);
+  });
+}
+
+$('#add-btn').addEventListener('click', () => {
+  if (currentView === 'student') openStudentForm();
+  else openCourseForm();
+});
 $('#btn-cancel').addEventListener('click', () => hideModal(courseModal));
+$('#student-btn-cancel').addEventListener('click', () => hideModal(studentModal));
 
 $('#course-duration').addEventListener('input', () => {
   const d = parseInt($('#course-duration').value) || 0;
@@ -268,9 +344,16 @@ $('#course-duration').addEventListener('input', () => {
 courseForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const duration = parseInt($('#course-duration').value) || 60;
+  const studentName = $('#student-name').value.trim();
+  let studentId = courseForm.dataset.studentId || '';
+  if (!studentId && studentName) {
+    const existingStudent = students.find(s => s.name === studentName);
+    if (existingStudent) studentId = existingStudent.id;
+  }
   const data = {
     id: courseIdInput.value,
-    studentName: $('#student-name').value,
+    studentId: studentId,
+    studentName: studentName,
     date: $('#course-date').value,
     time: $('#course-time').value,
     duration: duration,
@@ -415,6 +498,189 @@ async function toggleCourseFeedback(id) {
   await saveCourse(course);
   showToast(course.feedbackSent ? '反馈已发' : '反馈未发');
   refreshCurrentView();
+}
+
+/* ===== Student View ===== */
+function renderStudentList() {
+  studentList.innerHTML = '';
+  if (students.length === 0) {
+    studentEmpty.classList.add('visible');
+    return;
+  }
+  studentEmpty.classList.remove('visible');
+
+  students.sort((a, b) => a.name.localeCompare(b.name, 'zh')).forEach(student => {
+    const studentCourses = courses.filter(c => c.studentId === student.id);
+    const totalFee = studentCourses
+      .filter(c => c.status !== 'cancelled')
+      .reduce((sum, c) => sum + (c.fee || 0), 0);
+
+    const card = document.createElement('div');
+    card.className = 'student-card';
+    card.innerHTML = `
+      <div class="student-card-header">
+        <span class="student-name">${escapeHtml(student.name)}</span>
+        <span class="student-course-count">${studentCourses.length}节课 | ¥${totalFee.toFixed(2)}</span>
+      </div>
+      ${student.phone ? `<div class="student-phone">📞 ${escapeHtml(student.phone)}</div>` : ''}
+      ${student.notes ? `<div class="student-notes">📝 ${escapeHtml(student.notes)}</div>` : ''}
+      <div class="course-card-actions">
+        <button class="btn-sm primary student-edit-btn" data-id="${student.id}">编辑</button>
+        <button class="btn-sm danger student-delete-btn" data-id="${student.id}">删除</button>
+      </div>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.student-edit-btn')) {
+        e.stopPropagation();
+        const s = students.find(st => st.id === student.id);
+        if (s) openStudentForm(s);
+      } else if (e.target.closest('.student-delete-btn')) {
+        e.stopPropagation();
+        confirmDeleteStudent(student);
+      } else {
+        showStudentCourses(student.id, student.name);
+      }
+    });
+
+    studentList.appendChild(card);
+  });
+}
+
+function showStudentCourses(studentId, studentName) {
+  selectedStudentId = studentId;
+  studentView.classList.remove('active');
+  studentCourseView.classList.add('active');
+  studentCourseTitle.textContent = `${studentName} 的课程`;
+  renderStudentCourseList();
+}
+
+function renderStudentCourseList() {
+  const studentCourses = courses
+    .filter(c => c.studentId === selectedStudentId)
+    .sort((a, b) => b.dateTime.localeCompare(a.dateTime));
+
+  studentCourseList.innerHTML = '';
+
+  if (studentCourses.length === 0) {
+    studentCourseList.innerHTML = '<div class="empty-state visible"><div class="empty-icon">📝</div><p>该学生还没有课程</p></div>';
+    return;
+  }
+
+  studentCourses.forEach(course => {
+    const endTime = calculateEndTime(course.time, course.duration);
+    const card = document.createElement('div');
+    card.className = `course-card status-${course.status}`;
+    card.innerHTML = `
+      <div class="course-card-header">
+        <span class="course-student">${escapeHtml(course.studentName)}</span>
+        <div class="card-toggle-btns">
+          <button class="toggle-status-btn badge-${course.status}" data-id="${course.id}">${statusText(course.status)}</button>
+          <button class="toggle-feedback-btn ${course.feedbackSent ? 'feedback-sent' : 'feedback-unsent'}" data-id="${course.id}">${feedbackText(course.feedbackSent)}</button>
+        </div>
+      </div>
+      <div class="course-datetime">
+        <span>📅 ${course.date}</span>
+        <span>🕐 ${formatTime(course.time)}-${endTime}</span>
+      </div>
+      <div class="course-info-row">
+        <span>⏱ ${course.duration}分钟</span>
+        <span>💰 ¥${course.fee.toFixed(2)}</span>
+      </div>
+      ${course.notes ? `<div class="course-notes">📝 ${escapeHtml(course.notes)}</div>` : ''}
+      <div class="course-card-actions">
+        <button class="btn-sm primary edit-btn" data-id="${course.id}">编辑</button>
+        <button class="btn-sm danger delete-btn" data-id="${course.id}">删除</button>
+      </div>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.edit-btn')) {
+        e.stopPropagation();
+        const c = courses.find(co => co.id === course.id);
+        if (c) openCourseForm(c);
+      } else if (e.target.closest('.delete-btn')) {
+        e.stopPropagation();
+        confirmDelete(course);
+      } else if (e.target.closest('.toggle-status-btn')) {
+        e.stopPropagation();
+        toggleCourseStatus(course.id);
+      } else if (e.target.closest('.toggle-feedback-btn')) {
+        e.stopPropagation();
+        toggleCourseFeedback(course.id);
+      } else {
+        const c = courses.find(co => co.id === course.id);
+        if (c) openCourseForm(c);
+      }
+    });
+
+    studentCourseList.appendChild(card);
+  });
+}
+
+$('#student-back-btn').addEventListener('click', () => {
+  studentCourseView.classList.remove('active');
+  studentView.classList.add('active');
+  selectedStudentId = null;
+});
+
+/* ===== Student Form Modal ===== */
+function openStudentForm(student = null) {
+  if (student) {
+    $('#student-modal-title').textContent = '编辑学生';
+    $('#student-id').value = student.id;
+    $('#student-name-input').value = student.name;
+    $('#student-phone').value = student.phone || '';
+    $('#student-notes-input').value = student.notes || '';
+    studentForm.dataset.mode = 'edit';
+  } else {
+    $('#student-modal-title').textContent = '添加学生';
+    studentForm.reset();
+    $('#student-id').value = '';
+    studentForm.dataset.mode = 'add';
+  }
+  showModal(studentModal);
+  setTimeout(() => $('#student-name-input').focus(), 300);
+}
+
+studentForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#student-name-input').value.trim();
+  if (!name) {
+    showToast('请输入学生姓名');
+    return;
+  }
+  const existing = studentForm.dataset.mode === 'edit' ? students.find(s => s.id === $('#student-id').value) : null;
+  const data = {
+    id: $('#student-id').value,
+    name: name,
+    phone: $('#student-phone').value,
+    notes: $('#student-notes-input').value,
+    createdAt: existing ? existing.createdAt : new Date().toISOString()
+  };
+  try {
+    await saveStudent(data);
+    hideModal(studentModal);
+    showToast(studentForm.dataset.mode === 'edit' ? '学生已更新' : '学生已添加');
+    renderStudentList();
+  } catch (err) {
+    console.error('Save student failed:', err);
+    showToast('保存失败，请重试');
+  }
+});
+
+function confirmDeleteStudent(student) {
+  const studentCourses = courses.filter(c => c.studentId === student.id);
+  let msg = `确定要删除学生「${student.name}」吗？`;
+  if (studentCourses.length > 0) {
+    msg += `\n该学生有 ${studentCourses.length} 条课程记录，删除学生后课程仍会保留。`;
+  }
+  if (confirm(msg)) {
+    deleteStudent(student.id).then(() => {
+      showToast('学生已删除');
+      renderStudentList();
+    });
+  }
 }
 
 /* ===== Calendar View ===== */
@@ -639,6 +905,7 @@ function refreshCurrentView() {
   if (currentView === 'list') renderCourseList();
   else if (currentView === 'calendar') { renderCalendar(); if (selectedDay) renderDayCourses(selectedDay); }
   else if (currentView === 'stats') renderStats();
+  else if (currentView === 'student') { if (selectedStudentId) renderStudentCourseList(); else renderStudentList(); }
 }
 
 /* ===== Notifications & Reminders ===== */
@@ -704,6 +971,7 @@ if ('serviceWorker' in navigator) {
 /* ===== App Initialization ===== */
 async function initApp() {
   try {
+    await loadStudents();
     await loadCourses();
     renderCourseList();
     startReminderService();
