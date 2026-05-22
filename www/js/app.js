@@ -64,6 +64,18 @@ function formatTime(timeStr) {
   return timeStr.substring(0, 5);
 }
 
+function calculateEndTime(startTime, durationMinutes) {
+  const [h, m] = startTime.split(':').map(Number);
+  const totalMinutes = h * 60 + m + (durationMinutes || 0);
+  const endH = Math.floor(totalMinutes / 60) % 24;
+  const endM = totalMinutes % 60;
+  return `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+}
+
+function calcFee(durationMinutes) {
+  return Math.round((durationMinutes / 60) * 70 * 100) / 100;
+}
+
 function formatDateTime(dateStr, timeStr) {
   return `${formatDate(dateStr)} ${formatTime(timeStr || '00:00')}`;
 }
@@ -80,6 +92,10 @@ function todayStr() {
 function statusText(status) {
   const map = { pending: '待上课', completed: '已完成', cancelled: '已取消' };
   return map[status] || status;
+}
+
+function feedbackText(sent) {
+  return sent ? '反馈已发' : '反馈未发';
 }
 
 /* ===== Toast ===== */
@@ -187,15 +203,17 @@ async function loadCourses() {
 
 async function saveCourse(courseData) {
   if (!db) db = await openDB();
+  const duration = parseInt(courseData.duration) || 60;
   const course = {
     id: courseData.id || generateId(),
     studentName: courseData.studentName.trim(),
     date: courseData.date,
     time: courseData.time,
     dateTime: courseData.date + 'T' + courseData.time,
-    duration: parseInt(courseData.duration) || 60,
-    fee: parseFloat(courseData.fee) || 0,
+    duration: duration,
+    fee: calcFee(duration),
     status: courseData.status || 'pending',
+    feedbackSent: !!courseData.feedbackSent,
     notes: courseData.notes.trim(),
     createdAt: courseData.createdAt || new Date().toISOString()
   };
@@ -222,6 +240,7 @@ function openCourseForm(course = null) {
     $('#course-status').value = course.status;
     $('#course-notes').value = course.notes || '';
     courseForm.dataset.mode = 'edit';
+    courseForm.dataset.feedbackSent = course.feedbackSent ? '1' : '0';
   } else {
     modalTitle.textContent = '添加课程';
     courseForm.reset();
@@ -229,9 +248,10 @@ function openCourseForm(course = null) {
     $('#course-date').value = todayStr();
     $('#course-time').value = '08:00';
     $('#course-duration').value = '60';
-    $('#course-fee').value = '0';
+    $('#course-fee').value = calcFee(60);
     $('#course-status').value = 'pending';
     courseForm.dataset.mode = 'add';
+    courseForm.dataset.feedbackSent = '0';
   }
   showModal(courseModal);
   setTimeout(() => $('#student-name').focus(), 300);
@@ -240,16 +260,23 @@ function openCourseForm(course = null) {
 $('#add-btn').addEventListener('click', () => openCourseForm());
 $('#btn-cancel').addEventListener('click', () => hideModal(courseModal));
 
+$('#course-duration').addEventListener('input', () => {
+  const d = parseInt($('#course-duration').value) || 0;
+  $('#course-fee').value = calcFee(d);
+});
+
 courseForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const duration = parseInt($('#course-duration').value) || 60;
   const data = {
     id: courseIdInput.value,
     studentName: $('#student-name').value,
     date: $('#course-date').value,
     time: $('#course-time').value,
-    duration: $('#course-duration').value,
-    fee: $('#course-fee').value,
+    duration: duration,
+    fee: calcFee(duration),
     status: $('#course-status').value,
+    feedbackSent: courseForm.dataset.feedbackSent === '1',
     notes: $('#course-notes').value
   };
 
@@ -300,20 +327,24 @@ function renderCourseList() {
   emptyState.classList.remove('visible');
 
   filtered.forEach(course => {
+    const endTime = calculateEndTime(course.time, course.duration);
     const card = document.createElement('div');
     card.className = `course-card status-${course.status}`;
     card.innerHTML = `
       <div class="course-card-header">
         <span class="course-student">${escapeHtml(course.studentName)}</span>
-        <span class="course-status-badge badge-${course.status}">${statusText(course.status)}</span>
+        <div class="card-toggle-btns">
+          <button class="toggle-status-btn badge-${course.status}" data-id="${course.id}">${statusText(course.status)}</button>
+          <button class="toggle-feedback-btn ${course.feedbackSent ? 'feedback-sent' : 'feedback-unsent'}" data-id="${course.id}">${feedbackText(course.feedbackSent)}</button>
+        </div>
       </div>
       <div class="course-datetime">
         <span>📅 ${course.date}</span>
-        <span>🕐 ${formatTime(course.time)}</span>
+        <span>🕐 ${formatTime(course.time)}-${endTime}</span>
       </div>
       <div class="course-info-row">
         <span>⏱ ${course.duration}分钟</span>
-        ${course.fee > 0 ? `<span>💰 ¥${course.fee.toFixed(2)}</span>` : ''}
+        <span>💰 ¥${course.fee.toFixed(2)}</span>
       </div>
       ${course.notes ? `<div class="course-notes">📝 ${escapeHtml(course.notes)}</div>` : ''}
       <div class="course-card-actions">
@@ -330,6 +361,12 @@ function renderCourseList() {
       } else if (e.target.closest('.delete-btn')) {
         e.stopPropagation();
         confirmDelete(course);
+      } else if (e.target.closest('.toggle-status-btn')) {
+        e.stopPropagation();
+        toggleCourseStatus(course.id);
+      } else if (e.target.closest('.toggle-feedback-btn')) {
+        e.stopPropagation();
+        toggleCourseFeedback(course.id);
       } else {
         const c = courses.find(co => co.id === course.id);
         if (c) openCourseForm(c);
@@ -354,6 +391,30 @@ function confirmDelete(course) {
       refreshCurrentView();
     });
   }
+}
+
+async function toggleCourseStatus(id) {
+  const course = courses.find(c => c.id === id);
+  if (!course) return;
+  if (course.status === 'pending') {
+    course.status = 'completed';
+  } else if (course.status === 'completed') {
+    course.status = 'pending';
+  } else {
+    course.status = 'pending';
+  }
+  await saveCourse(course);
+  showToast(`状态已更新为「${statusText(course.status)}」`);
+  refreshCurrentView();
+}
+
+async function toggleCourseFeedback(id) {
+  const course = courses.find(c => c.id === id);
+  if (!course) return;
+  course.feedbackSent = !course.feedbackSent;
+  await saveCourse(course);
+  showToast(course.feedbackSent ? '反馈已发' : '反馈未发');
+  refreshCurrentView();
 }
 
 /* ===== Calendar View ===== */
@@ -451,6 +512,7 @@ function renderDayCourses(dateStr) {
   }
 
   dayCourses.forEach(course => {
+    const endTime = calculateEndTime(course.time, course.duration);
     const item = document.createElement('div');
     item.className = 'day-course-item';
     item.innerHTML = `
@@ -459,7 +521,7 @@ function renderDayCourses(dateStr) {
           <span class="course-status-badge badge-${course.status}" style="margin-right: 6px;">${statusText(course.status)}</span>
           ${escapeHtml(course.studentName)}
         </div>
-        <div class="day-course-time">🕐 ${formatTime(course.time)} | ⏱ ${course.duration}分钟 ${course.fee > 0 ? `| 💰 ¥${course.fee.toFixed(2)}` : ''}</div>
+        <div class="day-course-time">🕐 ${formatTime(course.time)}-${endTime} | ⏱ ${course.duration}分钟 | 💰 ¥${course.fee.toFixed(2)}</div>
       </div>
     `;
     item.addEventListener('click', () => {

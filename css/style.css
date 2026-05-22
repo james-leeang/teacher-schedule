@@ -248,6 +248,56 @@ button, input, textarea, select {
   color: #CF1322;
 }
 
+/* Card Toggle Buttons */
+.card-toggle-btns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.toggle-status-btn,
+.toggle-feedback-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.toggle-status-btn.badge-pending {
+  background: #FFF7E6;
+  color: #D48806;
+  border-color: #FFD591;
+}
+
+.toggle-status-btn.badge-completed {
+  background: #F6FFED;
+  color: #389E0D;
+  border-color: #B7EB8F;
+}
+
+.toggle-status-btn.badge-cancelled {
+  background: #FFF2F0;
+  color: #CF1322;
+  border-color: #FFA39E;
+}
+
+.toggle-feedback-btn.feedback-sent {
+  background: #E6F7FF;
+  color: #096DD9;
+  border-color: #91D5FF;
+}
+
+.toggle-feedback-btn.feedback-unsent {
+  background: #FFFBE6;
+  color: #D48806;
+  border-color: #FFE58F;
+}
+
 .course-datetime {
   font-size: 14px;
   color: var(--text-secondary);
@@ -673,6 +723,12 @@ button, input, textarea, select {
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: 6px;
+}
+
+.auto-hint {
+  font-size: 11px;
+  color: var(--primary);
+  font-weight: 400;
 }
 
 .form-group input,
