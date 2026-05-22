@@ -33,8 +33,11 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      - name: Set npm mirror
+        run: npm config set registry https://mirrors.cloud.tencent.com/npm/
+
       - name: Install dependencies
-        run: npm install --registry=https://registry.npmjs.org
+        run: npm install
 
       - name: Sync Capacitor
         run: npx cap sync android
