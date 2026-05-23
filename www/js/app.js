@@ -236,6 +236,84 @@ $$('.modal-close').forEach(btn => {
   });
 });
 
+/* ===== BottomSheet Select Component ===== */
+const bottomSheet = $('#bottomsheet');
+const bsOptions = bottomSheet.querySelector('.bs-options');
+const bsTitle = bottomSheet.querySelector('.bs-title');
+let bsCallback = null;
+
+bottomSheet.querySelector('.bs-backdrop').addEventListener('click', () => {
+  bottomSheet.classList.remove('show');
+  bsCallback = null;
+});
+bottomSheet.querySelector('.bs-done').addEventListener('click', () => {
+  bottomSheet.classList.remove('show');
+  bsCallback = null;
+});
+
+function openBottomSheet(title, options, currentValue, callback) {
+  bsTitle.textContent = title;
+  bsOptions.innerHTML = '';
+  options.forEach(opt => {
+    const div = document.createElement('div');
+    div.className = 'bs-option' + (opt.value === currentValue ? ' selected' : '');
+    div.innerHTML = `<span>${opt.label}</span><span class="bs-check">✓</span>`;
+    div.addEventListener('click', () => {
+      bottomSheet.classList.remove('show');
+      if (callback) callback(opt.value, opt.label);
+      bsCallback = null;
+    });
+    bsOptions.appendChild(div);
+  });
+  bottomSheet.classList.add('show');
+  bsCallback = callback;
+}
+
+function createCustomSelect(selectEl, title) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'custom-select';
+  wrapper.style.display = 'none'; // hide initially
+
+  const updateText = () => {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    wrapper.textContent = opt ? opt.textContent : '';
+  };
+  updateText();
+
+  wrapper.addEventListener('click', () => {
+    const options = [];
+    for (let i = 0; i < selectEl.options.length; i++) {
+      const o = selectEl.options[i];
+      if (o.value) options.push({ value: o.value, label: o.textContent });
+    }
+    openBottomSheet(title, options, selectEl.value, (val) => {
+      selectEl.value = val;
+      updateText();
+      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  selectEl.parentNode.insertBefore(wrapper, selectEl);
+  selectEl.style.display = 'none';
+  wrapper.style.display = '';
+
+  // Also update when changed programmatically
+  selectEl.addEventListener('change', updateText);
+}
+
+// Initialize all selects as custom bottom sheets
+function initAllCustomSelects() {
+  createCustomSelect($('#status-filter'), '选择课程状态');
+  createCustomSelect($('#sort-order'), '选择排序方式');
+}
+
+function ensureStudentCustomSelect() {
+  const select = $('#student-name');
+  if (!select.parentNode.querySelector('.custom-select')) {
+    createCustomSelect(select, '选择学生');
+  }
+}
+
 /* ===== Course CRUD ===== */
 async function loadCourses() {
   if (!db) db = await openDB();
@@ -302,6 +380,7 @@ function openCourseForm(course = null) {
     return;
   }
   populateStudentSelect();
+  ensureStudentCustomSelect();
   if (course) {
     modalTitle.textContent = '编辑课程';
     courseIdInput.value = course.id;
@@ -346,6 +425,12 @@ function populateStudentSelect() {
     opt.textContent = s.name;
     select.appendChild(opt);
   });
+  // Update custom select trigger if exists
+  const trigger = select.parentNode.querySelector('.custom-select');
+  if (trigger) {
+    const opt = select.options[select.selectedIndex];
+    trigger.textContent = opt ? opt.textContent : '';
+  }
 }
 
 $('#add-btn').addEventListener('click', () => {
@@ -522,13 +607,9 @@ function confirmDelete(course) {
 async function toggleCourseStatus(id) {
   const course = courses.find(c => c.id === id);
   if (!course) return;
-  if (course.status === 'pending') {
-    course.status = 'completed';
-  } else if (course.status === 'completed') {
-    course.status = 'pending';
-  } else {
-    course.status = 'pending';
-  }
+  const newStatus = course.status === 'pending' ? 'completed' : 'pending';
+  if (!confirm(`确定将「${course.studentName}」的状态切换为「${statusText(newStatus)}」吗？`)) return;
+  course.status = newStatus;
   await saveCourse(course);
   showToast(`状态已更新为「${statusText(course.status)}」`);
   refreshCurrentView();
@@ -537,9 +618,12 @@ async function toggleCourseStatus(id) {
 async function toggleCourseFeedback(id) {
   const course = courses.find(c => c.id === id);
   if (!course) return;
-  course.feedbackSent = !course.feedbackSent;
+  const newState = !course.feedbackSent;
+  const label = newState ? '反馈已发' : '反馈未发';
+  if (!confirm(`确定将「${course.studentName}」的反馈状态切换为「${label}」吗？`)) return;
+  course.feedbackSent = newState;
   await saveCourse(course);
-  showToast(course.feedbackSent ? '反馈已发' : '反馈未发');
+  showToast(label);
   refreshCurrentView();
 }
 
@@ -1444,6 +1528,7 @@ async function initApp() {
   try {
     await loadStudents();
     await loadCourses();
+    initAllCustomSelects();
     renderCourseList();
     startReminderService();
   } catch (err) {
