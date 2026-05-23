@@ -293,6 +293,9 @@ function openBottomSheet(title, options, currentValue, callback) {
 }
 
 function createCustomSelect(selectEl, title) {
+  // 防止重复包装：如果已经有 custom-select 兄弟节点，直接跳过
+  if (selectEl.parentNode.querySelector('.custom-select')) return;
+
   const wrapper = document.createElement('div');
   wrapper.className = 'custom-select';
   wrapper.style.display = 'none'; // hide initially
@@ -325,9 +328,25 @@ function createCustomSelect(selectEl, title) {
 }
 
 // Initialize all selects as custom bottom sheets
+// 自动扫描所有 <select>，避免以后新增表单又忘了登记
 function initAllCustomSelects() {
-  createCustomSelect($('#status-filter'), '选择课程状态');
-  createCustomSelect($('#sort-order'), '选择排序方式');
+  document.querySelectorAll('select').forEach(sel => {
+    // 用紧邻的 <label> 文字作为弹窗标题；若拿不到则用一些已知 id 的兜底
+    let title = '请选择';
+    const label = sel.previousElementSibling;
+    if (label && label.tagName === 'LABEL') {
+      title = label.textContent.replace(/\s*\*\s*$/, '').trim();
+    } else {
+      const titleMap = {
+        'status-filter': '选择课程状态',
+        'sort-order': '选择排序方式',
+        'course-status': '选择课程状态',
+        'student-name': '选择学生'
+      };
+      if (titleMap[sel.id]) title = titleMap[sel.id];
+    }
+    createCustomSelect(sel, title);
+  });
 }
 
 function ensureStudentCustomSelect() {
@@ -1146,124 +1165,18 @@ function renderWeekView() {
   }
 
   // Long-press multi-select for quick add
-  let selectTimer = null;
-  let selectActive = false;
-  let selectStartSlot = null;
-  let selectDay = null;
-  let selectStartTime = null;
-  let selectEndTime = null;
-
-  body.addEventListener('touchstart', (e) => {
-    const slot = e.target.closest('.tt-slot');
-    if (!slot || slot.querySelector('.tt-course')) return;
-    selectStartSlot = slot;
-    selectDay = parseInt(slot.dataset.day);
-    selectStartTime = slot.dataset.time;
-    selectEndTime = slot.dataset.time;
-    clearTimeout(selectTimer);
-    selectTimer = setTimeout(() => {
-      selectActive = true;
-      clearSelection();
-      highlightSlot(slot);
-    }, 500);
-  }, { passive: false });
-
-  body.addEventListener('touchmove', (e) => {
-    if (!selectActive) return;
-    e.preventDefault();
-    const touch = e.touches[0];
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const slot = el ? el.closest('.tt-slot') : null;
-    if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === selectDay) {
-      selectEndTime = slot.dataset.time;
-      clearSelection();
-      // Highlight all slots from start to current
-      const rows = body.querySelectorAll('.timetable-row');
-      let inRange = false;
-      rows.forEach(r => {
-        const s = r.children[selectStartSlot.dataset.dow + 1];
-        if (s === selectStartSlot) inRange = true;
-        if (s === slot) { highlightSlot(s); inRange = false; }
-        else if (inRange) highlightSlot(s);
-      });
-    }
-  }, { passive: false });
-
-  body.addEventListener('touchend', (e) => {
-    clearTimeout(selectTimer);
-    if (!selectActive) return;
-    selectActive = false;
-    finishMultiSelect();
+  // 状态变量提到 window.__weekViewState，避免每次 renderWeekView 都新建
+  // 事件监听器也只在第一次绑定，否则切周会累积导致触发多次
+  const ws = (window.__weekViewState = window.__weekViewState || {
+    selectTimer: null,
+    selectActive: false,
+    selectStartSlot: null,
+    selectDay: null,
+    selectStartTime: null,
+    selectEndTime: null,
+    swipeStartX: 0,
+    bound: false
   });
-
-  // Mouse events for desktop
-  body.addEventListener('mousedown', (e) => {
-    const slot = e.target.closest('.tt-slot');
-    if (!slot || slot.querySelector('.tt-course')) return;
-    if (e.target.closest('.tt-add-mark')) return;
-    selectStartSlot = slot;
-    selectDay = parseInt(slot.dataset.day);
-    selectStartTime = slot.dataset.time;
-    selectEndTime = slot.dataset.time;
-    clearTimeout(selectTimer);
-    selectTimer = setTimeout(() => {
-      selectActive = true;
-      clearSelection();
-      highlightSlot(slot);
-    }, 400);
-  });
-
-  body.addEventListener('mousemove', (e) => {
-    if (!selectActive) return;
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    const slot = el ? el.closest('.tt-slot') : null;
-    if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === selectDay) {
-      selectEndTime = slot.dataset.time;
-      clearSelection();
-      const rows = body.querySelectorAll('.timetable-row');
-      let inRange = false;
-      rows.forEach(r => {
-        const s = r.children[parseInt(selectStartSlot.dataset.dow) + 1];
-        if (s === selectStartSlot) inRange = true;
-        if (s === slot) { highlightSlot(s); inRange = false; }
-        else if (inRange && s && !s.querySelector('.tt-course')) highlightSlot(s);
-      });
-    }
-  });
-
-  document.addEventListener('mouseup', () => {
-    clearTimeout(selectTimer);
-    if (!selectActive) return;
-    selectActive = false;
-    finishMultiSelect();
-  });
-
-  // Swipe to navigate weeks
-  let swipeStartX = 0;
-  body.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.tt-course')) return;
-    swipeStartX = e.touches[0].clientX;
-  }, { passive: true });
-
-  body.addEventListener('touchend', (e) => {
-    const dx = e.changedTouches[0].clientX - swipeStartX;
-    if (Math.abs(dx) > 60 && !selectActive) {
-      navigateWeek(dx < 0 ? 1 : -1);
-    }
-  });
-
-  function finishMultiSelect() {
-    const selectedSlots = body.querySelectorAll('.tt-slot-selected');
-    if (selectedSlots.length > 1 && selectDay !== null) {
-      const lastSlot = selectedSlots[selectedSlots.length - 1];
-      const endTimeForCalc = calculateEndTime(lastSlot.dataset.time, 60);
-      const [sh, sm] = selectStartTime.split(':').map(Number);
-      const [eh, em] = endTimeForCalc.split(':').map(Number);
-      const duration = (eh * 60 + em) - (sh * 60 + sm);
-      quickAddCourse(selectDay, selectStartTime, selectStartSlot.dataset.dow, Math.max(duration, 15));
-    }
-    clearSelection();
-  }
 
   function highlightSlot(slot) {
     if (slot && !slot.querySelector('.tt-course')) {
@@ -1273,6 +1186,120 @@ function renderWeekView() {
 
   function clearSelection() {
     body.querySelectorAll('.tt-slot-selected').forEach(s => s.classList.remove('tt-slot-selected'));
+  }
+
+  function finishMultiSelect() {
+    const selectedSlots = body.querySelectorAll('.tt-slot-selected');
+    if (selectedSlots.length > 1 && ws.selectDay !== null) {
+      const lastSlot = selectedSlots[selectedSlots.length - 1];
+      const endTimeForCalc = calculateEndTime(lastSlot.dataset.time, 60);
+      const [sh, sm] = ws.selectStartTime.split(':').map(Number);
+      const [eh, em] = endTimeForCalc.split(':').map(Number);
+      const duration = (eh * 60 + em) - (sh * 60 + sm);
+      quickAddCourse(ws.selectDay, ws.selectStartTime, ws.selectStartSlot.dataset.dow, Math.max(duration, 15));
+    }
+    clearSelection();
+  }
+
+  if (!ws.bound) {
+    ws.bound = true;
+
+    body.addEventListener('touchstart', (e) => {
+      const slot = e.target.closest('.tt-slot');
+      if (!slot || slot.querySelector('.tt-course')) return;
+      ws.selectStartSlot = slot;
+      ws.selectDay = parseInt(slot.dataset.day);
+      ws.selectStartTime = slot.dataset.time;
+      ws.selectEndTime = slot.dataset.time;
+      clearTimeout(ws.selectTimer);
+      ws.selectTimer = setTimeout(() => {
+        ws.selectActive = true;
+        clearSelection();
+        highlightSlot(slot);
+      }, 500);
+    }, { passive: false });
+
+    body.addEventListener('touchmove', (e) => {
+      if (!ws.selectActive) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const slot = el ? el.closest('.tt-slot') : null;
+      if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === ws.selectDay) {
+        ws.selectEndTime = slot.dataset.time;
+        clearSelection();
+        const rows = body.querySelectorAll('.timetable-row');
+        let inRange = false;
+        rows.forEach(r => {
+          const s = r.children[parseInt(ws.selectStartSlot.dataset.dow) + 1];
+          if (s === ws.selectStartSlot) inRange = true;
+          if (s === slot) { highlightSlot(s); inRange = false; }
+          else if (inRange) highlightSlot(s);
+        });
+      }
+    }, { passive: false });
+
+    body.addEventListener('touchend', () => {
+      clearTimeout(ws.selectTimer);
+      if (!ws.selectActive) return;
+      ws.selectActive = false;
+      finishMultiSelect();
+    });
+
+    // Mouse events for desktop
+    body.addEventListener('mousedown', (e) => {
+      const slot = e.target.closest('.tt-slot');
+      if (!slot || slot.querySelector('.tt-course')) return;
+      if (e.target.closest('.tt-add-mark')) return;
+      ws.selectStartSlot = slot;
+      ws.selectDay = parseInt(slot.dataset.day);
+      ws.selectStartTime = slot.dataset.time;
+      ws.selectEndTime = slot.dataset.time;
+      clearTimeout(ws.selectTimer);
+      ws.selectTimer = setTimeout(() => {
+        ws.selectActive = true;
+        clearSelection();
+        highlightSlot(slot);
+      }, 400);
+    });
+
+    body.addEventListener('mousemove', (e) => {
+      if (!ws.selectActive) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const slot = el ? el.closest('.tt-slot') : null;
+      if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === ws.selectDay) {
+        ws.selectEndTime = slot.dataset.time;
+        clearSelection();
+        const rows = body.querySelectorAll('.timetable-row');
+        let inRange = false;
+        rows.forEach(r => {
+          const s = r.children[parseInt(ws.selectStartSlot.dataset.dow) + 1];
+          if (s === ws.selectStartSlot) inRange = true;
+          if (s === slot) { highlightSlot(s); inRange = false; }
+          else if (inRange && s && !s.querySelector('.tt-course')) highlightSlot(s);
+        });
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      clearTimeout(ws.selectTimer);
+      if (!ws.selectActive) return;
+      ws.selectActive = false;
+      finishMultiSelect();
+    });
+
+    // Swipe to navigate weeks
+    body.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.tt-course')) return;
+      ws.swipeStartX = e.touches[0].clientX;
+    }, { passive: true });
+
+    body.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - ws.swipeStartX;
+      if (Math.abs(dx) > 60 && !ws.selectActive) {
+        navigateWeek(dx < 0 ? 1 : -1);
+      }
+    });
   }
 
   // Lay out course blocks

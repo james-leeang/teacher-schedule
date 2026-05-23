@@ -1283,3 +1283,23 @@ button, input, textarea, select {
     border-radius: 16px;
   }
 }
+
+/* ===== 原生 select 兜底样式 =====
+   即使 BottomSheet 没接管，也别让浏览器/WebView 用丑的默认样式。
+   一旦 JS 包装成 custom-select，原生 select 会被 display:none 隐藏。 */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 8px;
+  padding: 10px 32px 10px 14px;
+  font-size: 14px;
+  color: var(--text, #333);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3e%3cpath fill='%23999' d='M6 8L0 0h12z'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 10px;
+}

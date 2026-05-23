@@ -12,6 +12,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Mirror root source to www/ (in case dev edited root files)
+        run: |
+          # 容错：如果开发者改的是根目录的 index.html / js / css，
+          # 这里把它们镜像到 www/，再交给 cap sync 推到 android
+          cp -f index.html www/index.html 2>/dev/null || true
+          cp -rf js/. www/js/ 2>/dev/null || true
+          cp -rf css/. www/css/ 2>/dev/null || true
+          cp -f manifest.json www/manifest.json 2>/dev/null || true
+          cp -f sw.js www/sw.js 2>/dev/null || true
+
+      - name: Sync www to android (Capacitor)
+        run: npx cap sync android
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
