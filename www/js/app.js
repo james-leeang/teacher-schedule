@@ -183,23 +183,27 @@ function switchView(viewName) {
     listView.classList.add('active');
     document.querySelector('[data-view="list"]').classList.add('active');
     $('#header-title').textContent = '课程管理';
+    $('#add-btn').style.display = '';
     selectedStudentId = null;
     renderCourseList();
   } else if (viewName === 'calendar') {
     calendarView.classList.add('active');
     document.querySelector('[data-view="calendar"]').classList.add('active');
     $('#header-title').textContent = '课程日历';
+    $('#add-btn').style.display = 'none';
     initCalendar();
     renderCalendar();
   } else if (viewName === 'stats') {
     statsView.classList.add('active');
     document.querySelector('[data-view="stats"]').classList.add('active');
     $('#header-title').textContent = '课程统计';
+    $('#add-btn').style.display = 'none';
     renderStats();
   } else if (viewName === 'student') {
     studentView.classList.add('active');
     document.querySelector('[data-view="student"]').classList.add('active');
     $('#header-title').textContent = '学生管理';
+    $('#add-btn').style.display = '';
     renderStudentList();
   }
 }
@@ -956,9 +960,30 @@ function renderWeekView() {
     row.appendChild(timeCell);
 
     // 7 day columns
+    const dayMap = [1, 2, 3, 4, 5, 6, 0];
     for (let d = 0; d < 7; d++) {
       const slot = document.createElement('div');
       slot.className = 'tt-slot';
+      slot.dataset.day = dayMap[d];
+      slot.dataset.time = tStart;
+      slot.dataset.dow = d;
+      slot.dataset.row = rowNum;
+
+      slot.addEventListener('click', (e) => {
+        const existing = slot.querySelector('.tt-course');
+        if (existing) return;
+        // Remove other + marks
+        body.querySelectorAll('.tt-add-mark').forEach(m => m.remove());
+        const mark = document.createElement('div');
+        mark.className = 'tt-add-mark';
+        mark.textContent = '+';
+        mark.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          quickAddCourse(parseInt(slot.dataset.day), slot.dataset.time, slot.dataset.dow);
+        });
+        slot.appendChild(mark);
+      });
+
       row.appendChild(slot);
     }
 
@@ -966,7 +991,7 @@ function renderWeekView() {
   }
 
   // Lay out course blocks
-  const dayMap = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun matching getDay()
+  const dayMap = [1, 2, 3, 4, 5, 6, 0];
   const rows = body.querySelectorAll('.timetable-row');
 
   const totalMinutesStart = START_HOUR * 60;
@@ -1031,6 +1056,49 @@ function renderWeekView() {
   body.parentElement.parentElement.appendChild(legend);
 }
 
+// Remove + marks when clicking outside timetable
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.tt-slot') && !e.target.closest('.tt-add-mark')) {
+    document.querySelectorAll('.tt-add-mark').forEach(m => m.remove());
+  }
+});
+
+function quickAddCourse(targetDay, time, dowIdx) {
+  if (students.length === 0) {
+    showToast('请先在「学生」标签页添加学生');
+    return;
+  }
+  // Find the next date matching this day of week
+  const now = new Date();
+  const todayDow = now.getDay();
+  let daysUntil = targetDay - todayDow;
+  if (daysUntil < 0) daysUntil += 7;
+  if (daysUntil === 0) {
+    const [h, m] = time.split(':').map(Number);
+    if (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)) {
+      daysUntil = 7;
+    }
+  }
+  const targetDate = new Date(now);
+  targetDate.setDate(now.getDate() + daysUntil);
+
+  populateStudentSelect();
+  $('#course-date').value = formatDate(targetDate);
+  $('#course-time').value = time;
+  $('#course-duration').value = '60';
+  $('#course-fee').value = calcFee(60);
+  $('#course-status').value = 'pending';
+  courseForm.dataset.mode = 'add';
+  courseForm.dataset.feedbackSent = '0';
+  $('#course-recurring').checked = false;
+  $('#course-recurring').parentElement.parentElement.style.display = '';
+  $('#recurring-options').style.display = 'none';
+  modalTitle.textContent = '添加课程';
+  courseIdInput.value = '';
+  courseForm.dataset.studentId = '';
+  showModal(courseModal);
+}
+
 /* ===== Statistics View ===== */
 function renderStats() {
   const total = courses.length;
@@ -1049,7 +1117,10 @@ function renderStats() {
   const now = new Date();
   const thisMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const monthCourses = courses.filter(c => c.date.startsWith(thisMonthPrefix));
-  const monthIncome = monthCourses
+  const monthPlannedIncome = monthCourses
+    .filter(c => c.status !== 'cancelled')
+    .reduce((sum, c) => sum + (c.fee || 0), 0);
+  const monthActualIncome = monthCourses
     .filter(c => c.status === 'completed')
     .reduce((sum, c) => sum + (c.fee || 0), 0);
   const monthMinutes = monthCourses
@@ -1057,7 +1128,8 @@ function renderStats() {
     .reduce((sum, c) => sum + (c.duration || 0), 0);
 
   $('#stat-month-courses').textContent = monthCourses.length;
-  $('#stat-month-income').textContent = `¥${monthIncome.toFixed(2)}`;
+  $('#stat-month-planned-income').textContent = `¥${monthPlannedIncome.toFixed(2)}`;
+  $('#stat-month-actual-income').textContent = `¥${monthActualIncome.toFixed(2)}`;
   $('#stat-month-hours').textContent = `${(monthMinutes / 60).toFixed(1)}小时`;
 
   // Monthly breakdown
