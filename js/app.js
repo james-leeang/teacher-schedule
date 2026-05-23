@@ -398,11 +398,25 @@ async function deleteCourse(id) {
 /* ===== Student CRUD ===== */
 async function saveStudent(studentData) {
   if (!db) db = await openDB();
+  // 学生颜色索引：新学生分配一个固定 colorIndex 存到数据库，
+  // 这样后续删除/添加学生时已有学生的颜色不会跳变
+  let colorIndex = studentData.colorIndex;
+  if (typeof colorIndex !== 'number') {
+    // 找一个当前没人用的颜色 index（颜色板有 15 种）
+    const used = new Set(students.map(s => s.colorIndex).filter(i => typeof i === 'number'));
+    const PALETTE_SIZE = 15;
+    colorIndex = 0;
+    for (let i = 0; i < PALETTE_SIZE; i++) {
+      if (!used.has(i)) { colorIndex = i; break; }
+      colorIndex = students.length % PALETTE_SIZE;  // 都用完就轮换
+    }
+  }
   const student = {
     id: studentData.id || generateId(),
     name: studentData.name.trim(),
     phone: studentData.phone ? studentData.phone.trim() : '',
     notes: studentData.notes ? studentData.notes.trim() : '',
+    colorIndex: colorIndex,
     createdAt: studentData.createdAt || new Date().toISOString()
   };
   await dbPut(db, STUDENT_STORE, student);
@@ -568,7 +582,28 @@ function getFilteredCourses() {
   return filtered;
 }
 
+// 课程列表点击事件代理（只绑一次）
+let _courseListBound = false;
+function bindCourseListEvents() {
+  if (_courseListBound) return;
+  _courseListBound = true;
+  courseList.addEventListener('click', (e) => {
+    const card = e.target.closest('.course-card');
+    if (!card) return;
+    const id = card.dataset.courseId;
+    if (!id) return;
+    const c = courses.find(co => co.id === id);
+    if (!c) return;
+    if (e.target.closest('.edit-btn')) { e.stopPropagation(); openCourseForm(c); }
+    else if (e.target.closest('.delete-btn')) { e.stopPropagation(); confirmDelete(c); }
+    else if (e.target.closest('.toggle-status-btn')) { e.stopPropagation(); toggleCourseStatus(c.id); }
+    else if (e.target.closest('.toggle-feedback-btn')) { e.stopPropagation(); toggleCourseFeedback(c.id); }
+    else { openCourseForm(c); }
+  });
+}
+
 function renderCourseList() {
+  bindCourseListEvents();
   const filtered = getFilteredCourses();
   courseList.innerHTML = '';
 
@@ -579,10 +614,13 @@ function renderCourseList() {
 
   emptyState.classList.remove('visible');
 
+  // 用 DocumentFragment 一次性 append，比 N 次 appendChild 快得多（大列表性能优化）
+  const frag = document.createDocumentFragment();
   filtered.forEach(course => {
     const endTime = calculateEndTime(course.time, course.duration);
     const card = document.createElement('div');
     card.className = `course-card status-${course.status}`;
+    card.dataset.courseId = course.id;
     card.innerHTML = `
       <div class="course-card-header">
         <span class="course-student">${escapeHtml(course.studentName)}</span>
@@ -605,29 +643,9 @@ function renderCourseList() {
         <button class="btn-sm danger delete-btn" data-id="${course.id}">删除</button>
       </div>
     `;
-
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('.edit-btn')) {
-        e.stopPropagation();
-        const c = courses.find(co => co.id === course.id);
-        if (c) openCourseForm(c);
-      } else if (e.target.closest('.delete-btn')) {
-        e.stopPropagation();
-        confirmDelete(course);
-      } else if (e.target.closest('.toggle-status-btn')) {
-        e.stopPropagation();
-        toggleCourseStatus(course.id);
-      } else if (e.target.closest('.toggle-feedback-btn')) {
-        e.stopPropagation();
-        toggleCourseFeedback(course.id);
-      } else {
-        const c = courses.find(co => co.id === course.id);
-        if (c) openCourseForm(c);
-      }
-    });
-
-    courseList.appendChild(card);
+    frag.appendChild(card);
   });
+  courseList.appendChild(frag);
 }
 
 function escapeHtml(str) {
@@ -1070,9 +1088,10 @@ function renderWeekView() {
   if (oldLegend) oldLegend.remove();
 
   const HOUR_HEIGHT = 68;
-  const START_HOUR = 7;
+  const START_HOUR = 8;     // 从 8:00 开始显示（之前是 7:00，按需求去掉 8 点前）
   const END_HOUR = 22;
   const slotMin = 60;
+  const TIME_COL_WIDTH = 44;  // 与 CSS .timetable-row grid-template-columns 一致
 
   // Build week dates
   const weekDates = [];
@@ -1100,6 +1119,8 @@ function renderWeekView() {
   });
 
   // Build student color map
+  // 优先使用学生数据中的 colorIndex（新版本会自动分配并固化），
+  // 老数据没有该字段时退回用数组下标，保证向后兼容
   const studentColors = {};
   const colorPalette = [
     '#E3F2FD', '#FCE4EC', '#E8F5E9', '#FFF3E0', '#F3E5F5',
@@ -1112,9 +1133,10 @@ function renderWeekView() {
     '#283593', '#BF360C', '#004D40', '#F9A825', '#4A148C'
   ];
   students.forEach((s, i) => {
+    const idx = typeof s.colorIndex === 'number' ? s.colorIndex : i;
     studentColors[s.id] = {
-      bg: colorPalette[i % colorPalette.length],
-      text: textPalette[i % textPalette.length]
+      bg: colorPalette[idx % colorPalette.length],
+      text: textPalette[idx % textPalette.length]
     };
   });
 
@@ -1144,8 +1166,13 @@ function renderWeekView() {
       slot.dataset.row = rowNum;
 
       slot.addEventListener('click', (e) => {
+        // 1. 该格已有课程块根节点 → 不能添加
         const existing = slot.querySelector('.tt-course');
         if (existing) return;
+        // 2. 该格被其他跨格课程覆盖 → 也不能添加
+        const occ = body.__occupiedSlots;
+        if (occ && occ.has(`${d}-${rowNum - 1}`)) return;
+
         // Remove other + marks
         body.querySelectorAll('.tt-add-mark').forEach(m => m.remove());
         const mark = document.createElement('div');
@@ -1178,8 +1205,20 @@ function renderWeekView() {
     bound: false
   });
 
+  function isSlotOccupied(slot) {
+    if (!slot) return true;
+    if (slot.querySelector('.tt-course')) return true;
+    const occ = body.__occupiedSlots;
+    if (occ) {
+      const dow = parseInt(slot.dataset.dow);
+      const rowIdx = parseInt(slot.dataset.row) - 1;
+      if (occ.has(`${dow}-${rowIdx}`)) return true;
+    }
+    return false;
+  }
+
   function highlightSlot(slot) {
-    if (slot && !slot.querySelector('.tt-course')) {
+    if (slot && !isSlotOccupied(slot)) {
       slot.classList.add('tt-slot-selected');
     }
   }
@@ -1206,7 +1245,7 @@ function renderWeekView() {
 
     body.addEventListener('touchstart', (e) => {
       const slot = e.target.closest('.tt-slot');
-      if (!slot || slot.querySelector('.tt-course')) return;
+      if (!slot || isSlotOccupied(slot)) return;
       ws.selectStartSlot = slot;
       ws.selectDay = parseInt(slot.dataset.day);
       ws.selectStartTime = slot.dataset.time;
@@ -1225,7 +1264,7 @@ function renderWeekView() {
       const touch = e.touches[0];
       const el = document.elementFromPoint(touch.clientX, touch.clientY);
       const slot = el ? el.closest('.tt-slot') : null;
-      if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === ws.selectDay) {
+      if (slot && !isSlotOccupied(slot) && parseInt(slot.dataset.day) === ws.selectDay) {
         ws.selectEndTime = slot.dataset.time;
         clearSelection();
         const rows = body.querySelectorAll('.timetable-row');
@@ -1249,7 +1288,7 @@ function renderWeekView() {
     // Mouse events for desktop
     body.addEventListener('mousedown', (e) => {
       const slot = e.target.closest('.tt-slot');
-      if (!slot || slot.querySelector('.tt-course')) return;
+      if (!slot || isSlotOccupied(slot)) return;
       if (e.target.closest('.tt-add-mark')) return;
       ws.selectStartSlot = slot;
       ws.selectDay = parseInt(slot.dataset.day);
@@ -1267,7 +1306,7 @@ function renderWeekView() {
       if (!ws.selectActive) return;
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const slot = el ? el.closest('.tt-slot') : null;
-      if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === ws.selectDay) {
+      if (slot && !isSlotOccupied(slot) && parseInt(slot.dataset.day) === ws.selectDay) {
         ws.selectEndTime = slot.dataset.time;
         clearSelection();
         const rows = body.querySelectorAll('.timetable-row');
@@ -1276,7 +1315,7 @@ function renderWeekView() {
           const s = r.children[parseInt(ws.selectStartSlot.dataset.dow) + 1];
           if (s === ws.selectStartSlot) inRange = true;
           if (s === slot) { highlightSlot(s); inRange = false; }
-          else if (inRange && s && !s.querySelector('.tt-course')) highlightSlot(s);
+          else if (inRange && s && !isSlotOccupied(s)) highlightSlot(s);
         });
       }
     });
@@ -1303,11 +1342,22 @@ function renderWeekView() {
   }
 
   // Lay out course blocks
+  // 注意：课程块定位到 .timetable-body（而不是单个 slot），因为 slot 是 grid
+  // 子元素，每行一个独立的 stacking context，绝对定位的课程块无法跨行显示。
+  // 算出整张表的绝对像素坐标，把所有课程块作为 body 的子元素。
   const dayMap = [1, 2, 3, 4, 5, 6, 0];
   const rows = body.querySelectorAll('.timetable-row');
 
+  // 等渲染完后再获取每一列的真实宽度（除时间列以外的 7 列等宽）
+  // 用 body 自身宽度减去时间列宽，再除 7
+  const bodyWidth = body.clientWidth || body.parentElement.clientWidth || 380;
+  const colWidth = (bodyWidth - TIME_COL_WIDTH) / 7;
+
   const totalMinutesStart = START_HOUR * 60;
-  const pxPerMinute = HOUR_HEIGHT / slotMin;
+
+  // 记录每个 slot 被哪些课程覆盖（用于禁用空白格的添加点击）
+  // key 格式："{dow}-{rowIdx}"，value 为 true
+  const occupiedSlots = new Set();
 
   courses.forEach(course => {
     if (course.status === 'cancelled') return;
@@ -1319,40 +1369,42 @@ function renderWeekView() {
     const [ch, cm] = course.time.split(':').map(Number);
     const startMin = ch * 60 + cm - totalMinutesStart;
     const durationMin = course.duration;
-    if (startMin < 0) return;
+    if (startMin < 0) return;  // 课程在显示窗口之前
 
-    // Find which row this course starts in
-    const rowIdx = Math.floor(startMin / slotMin);
-    const rowOffset = (startMin % slotMin) / slotMin * HOUR_HEIGHT;
-    const heightPx = Math.max(HOUR_HEIGHT * 0.3, (durationMin / slotMin) * HOUR_HEIGHT);
+    // 像素坐标
+    const topPx = (startMin / slotMin) * HOUR_HEIGHT;
+    const heightPx = Math.max(HOUR_HEIGHT * 0.5, (durationMin / slotMin) * HOUR_HEIGHT);
+    const leftPx = TIME_COL_WIDTH + colIdx * colWidth;
 
-    if (rowIdx >= 0 && rowIdx < rows.length) {
-      const slot = rows[rowIdx].children[colIdx + 1]; // +1 for time cell
-      if (!slot) return;
-
-      // Check if course block already exists at this position (merge)
-      const existing = slot.querySelector(`.tt-course[data-course-id="${course.id}"]`);
-      if (!existing) {
-        const colors = studentColors[course.studentId] || { bg: '#E3F2FD', text: '#1565C0' };
-        const block = document.createElement('div');
-        block.className = 'tt-course';
-        block.dataset.courseId = course.id;
-        block.style.background = colors.bg;
-        block.style.color = colors.text;
-        block.style.top = rowOffset + 'px';
-        block.style.height = heightPx + 'px';
-        block.style.zIndex = '3';
-        block.title = `${course.studentName} ${course.time}-${calculateEndTime(course.time, course.duration)}`;
-        block.innerHTML = `<span class="tt-course-name">${escapeHtml(course.studentName)}</span><span class="tt-course-time">${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}</span>`;
-        block.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const c = courses.find(co => co.id === course.id);
-          if (c) openCourseForm(c);
-        });
-        slot.appendChild(block);
-      }
+    // 标记被覆盖的所有 slot（按整行计算）
+    const startRowIdx = Math.floor(startMin / slotMin);
+    const endRowIdx = Math.ceil((startMin + durationMin) / slotMin) - 1;
+    for (let r = startRowIdx; r <= endRowIdx; r++) {
+      occupiedSlots.add(`${colIdx}-${r}`);
     }
+
+    const colors = studentColors[course.studentId] || { bg: '#E3F2FD', text: '#1565C0' };
+    const block = document.createElement('div');
+    block.className = 'tt-course';
+    block.dataset.courseId = course.id;
+    block.style.background = colors.bg;
+    block.style.color = colors.text;
+    block.style.left = (leftPx + 2) + 'px';
+    block.style.top = topPx + 'px';
+    block.style.width = (colWidth - 4) + 'px';
+    block.style.height = (heightPx - 2) + 'px';
+    block.title = `${course.studentName} ${course.time}-${calculateEndTime(course.time, course.duration)}`;
+    block.innerHTML = `<span class="tt-course-name">${escapeHtml(course.studentName)}</span><span class="tt-course-time">${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}</span>`;
+    block.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const c = courses.find(co => co.id === course.id);
+      if (c) openCourseForm(c);
+    });
+    body.appendChild(block);
   });
+
+  // 把"哪些 slot 被占用"信息存到 body 上，供点击/长按时查询
+  body.__occupiedSlots = occupiedSlots;
 
   // Legend
   const legend = document.createElement('div');
@@ -1524,6 +1576,16 @@ function checkUpcomingCourses() {
 
   const now = new Date();
   const nowTime = now.getTime();
+  // 用 localStorage 持久化"已提醒"标记，避免每次开 App 重新触发
+  // 旧的 sessionStorage 标记每次关闭 App 就丢失了，会重复打扰用户
+  const STORAGE_KEY = 'reminded_v2';
+  let reminded = {};
+  try {
+    reminded = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  } catch (e) {
+    reminded = {};
+  }
+  let dirty = false;
 
   courses.forEach(course => {
     if (course.status !== 'pending') return;
@@ -1534,32 +1596,42 @@ function checkUpcomingCourses() {
 
     // Reminder 1: Night before class day at 8:00 PM
     if (diffMinutes > 0) {
-      const eveningKey = `reminded_evening_${course.id}_${course.date}`;
-      if (!sessionStorage.getItem(eveningKey)) {
+      const eveningKey = `evening_${course.id}_${course.date}`;
+      if (!reminded[eveningKey]) {
         const eveningBefore = new Date(course.date + 'T20:00:00');
         eveningBefore.setDate(eveningBefore.getDate() - 1);
         if (nowTime >= eveningBefore.getTime()) {
           sendNotification('📅 明天有课',
             `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}`);
-          sessionStorage.setItem(eveningKey, '1');
+          reminded[eveningKey] = nowTime;
+          dirty = true;
         }
       }
     }
 
     // Reminder 2: 1 hour before class
-    const oneHourKey = `reminded_1h_${course.id}_${course.dateTime}`;
-    if (diffMinutes > 0 && diffMinutes <= 60 && !sessionStorage.getItem(oneHourKey)) {
+    const oneHourKey = `1h_${course.id}_${course.dateTime}`;
+    if (diffMinutes > 0 && diffMinutes <= 60 && !reminded[oneHourKey]) {
       sendNotification('⏰ 课程即将开始',
         `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}\n还有约${Math.round(diffMinutes)}分钟开始`);
-      sessionStorage.setItem(oneHourKey, '1');
+      reminded[oneHourKey] = nowTime;
+      dirty = true;
     }
   });
 
-  // Clean old session keys (keep last 100 courses worth)
-  const keys = Object.keys(sessionStorage);
-  const remindKeys = keys.filter(k => k.startsWith('reminded_'));
-  if (remindKeys.length > 200) {
-    remindKeys.slice(0, 100).forEach(k => sessionStorage.removeItem(k));
+  // 清理 7 天以前的旧标记，防止 localStorage 无限增长
+  const cutoff = nowTime - 7 * 24 * 60 * 60 * 1000;
+  Object.keys(reminded).forEach(k => {
+    if (reminded[k] < cutoff) {
+      delete reminded[k];
+      dirty = true;
+    }
+  });
+
+  if (dirty) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(reminded));
+    } catch (e) { /* localStorage 满了就忽略 */ }
   }
 }
 
