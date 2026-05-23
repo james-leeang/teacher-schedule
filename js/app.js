@@ -931,9 +931,6 @@ function navigateWeek(offset) {
   renderWeekView();
 }
 
-$('#week-prev').addEventListener('click', () => navigateWeek(-1));
-$('#week-next').addEventListener('click', () => navigateWeek(1));
-
 function renderWeekView() {
   const body = $('#timetable-body');
   body.innerHTML = '';

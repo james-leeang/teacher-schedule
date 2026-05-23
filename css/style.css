@@ -575,34 +575,6 @@ button, input, textarea, select {
 }
 
 /* ===== Timetable Week View ===== */
-.week-nav-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  padding: 0 4px;
-}
-
-.week-nav-btn {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  border-radius: 50%;
-  font-size: 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text);
-}
-
-#week-range-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
 .timetable-wrapper {
   background: var(--card-bg);
   border-radius: var(--radius);
