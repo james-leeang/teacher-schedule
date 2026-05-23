@@ -468,6 +468,7 @@ async function saveCourse(courseData) {
   };
   await dbPut(db, COURSE_STORE, course);
   await loadCourses();
+  scheduleRescheduleReminders();
   return course;
 }
 
@@ -475,6 +476,17 @@ async function deleteCourse(id) {
   if (!db) db = await openDB();
   await dbDelete(db, COURSE_STORE, id);
   await loadCourses();
+  scheduleRescheduleReminders();
+}
+
+// debounce 包装，避免循环添加 4 周课程时触发 4 次重排
+let _rescheduleTimer = null;
+function scheduleRescheduleReminders() {
+  if (_rescheduleTimer) clearTimeout(_rescheduleTimer);
+  _rescheduleTimer = setTimeout(() => {
+    _rescheduleTimer = null;
+    rescheduleNativeReminders();
+  }, 500);
 }
 
 /* ===== Student CRUD ===== */
@@ -1967,6 +1979,7 @@ async function importData(file) {
     await loadStudents();
     await loadCourses();
     refreshCurrentView();
+    scheduleRescheduleReminders();
     showToast(`已导入 ${data.students.length} 学生 + ${data.courses.length} 课程`);
   } catch (err) {
     console.error('Import failed:', err);
@@ -2129,11 +2142,146 @@ function checkUpcomingCourses() {
   }
 }
 
+/* ===== 原生通知调度（关 App 也能弹） ===== */
+
+// 判断是否在 Capacitor 原生环境
+function isNative() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+// 注册过的 LocalNotification id 上限是 2^31-1，且要正整数
+// 用一个简单 hash 把 course.id 字符串 + 类型映射成数字
+function notifId(courseId, type) {
+  // type: 1=evening, 2=onehour, 3=feedback_day
+  let h = 0;
+  const s = courseId + '_' + type;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h) % 2000000000 + 1;
+}
+
+async function rescheduleNativeReminders() {
+  if (!isNative() || !window.LocalNotifications) return;
+  const LN = window.LocalNotifications;
+
+  try {
+    // 先取消所有已预约的（旧的）
+    const pending = await LN.getPending();
+    if (pending && pending.notifications && pending.notifications.length > 0) {
+      await LN.cancel({ notifications: pending.notifications.map(n => ({ id: n.id })) });
+    }
+
+    // 重新计算未来 14 天内要预约的通知
+    const now = new Date();
+    const horizon = now.getTime() + 14 * 24 * 60 * 60 * 1000;
+    const toSchedule = [];
+
+    // 按"日期"聚合反馈未发提醒：每天 22:00 只发一条
+    const feedbackByDate = {};   // dateStr -> [courses...]
+
+    courses.forEach(c => {
+      if (c.status === 'cancelled') return;
+      const cTime = new Date(c.dateTime).getTime();
+
+      // 提醒1：前一晚 20:00（只对 pending）
+      if (c.status === 'pending') {
+        const eveningBefore = new Date(c.date + 'T20:00:00');
+        eveningBefore.setDate(eveningBefore.getDate() - 1);
+        const evMs = eveningBefore.getTime();
+        if (evMs > now.getTime() && evMs < horizon) {
+          toSchedule.push({
+            id: notifId(c.id, 1),
+            title: '📅 明天有课',
+            body: `${c.studentName}\n${c.date} ${formatTime(c.time)}-${calculateEndTime(c.time, c.duration)}`,
+            schedule: { at: eveningBefore, allowWhileIdle: true }
+          });
+        }
+      }
+
+      // 提醒2：课前 1 小时（只对 pending）
+      if (c.status === 'pending') {
+        const oneHourBefore = new Date(cTime - 60 * 60000);
+        const ohMs = oneHourBefore.getTime();
+        if (ohMs > now.getTime() && ohMs < horizon) {
+          toSchedule.push({
+            id: notifId(c.id, 2),
+            title: '⏰ 课程即将开始',
+            body: `${c.studentName}\n${c.date} ${formatTime(c.time)}-${calculateEndTime(c.time, c.duration)}`,
+            schedule: { at: oneHourBefore, allowWhileIdle: true }
+          });
+        }
+      }
+
+      // 提醒3：反馈未发 - 按日期聚合
+      if (!c.feedbackSent) {
+        if (!feedbackByDate[c.date]) feedbackByDate[c.date] = [];
+        feedbackByDate[c.date].push(c);
+      }
+    });
+
+    // 反馈未发：每个日期 22:00 一条聚合通知
+    Object.keys(feedbackByDate).forEach(dateStr => {
+      const fbDate = new Date(dateStr + 'T22:00:00');
+      const fbMs = fbDate.getTime();
+      if (fbMs <= now.getTime() || fbMs >= horizon) return;
+      const list = feedbackByDate[dateStr];
+      const body = list.map(c => `${c.studentName} ${formatTime(c.time)}`).join('\n');
+      const title = list.length === 1
+        ? '💬 该发反馈了'
+        : `💬 今天有 ${list.length} 节课反馈未发`;
+      // 用日期 hash 作为 id（不依赖 course.id，避免多课程冲突）
+      const idHash = notifId('fbday_' + dateStr, 3);
+      toSchedule.push({
+        id: idHash,
+        title: title,
+        body: body,
+        schedule: { at: fbDate, allowWhileIdle: true }
+      });
+    });
+
+    if (toSchedule.length > 0) {
+      // Capacitor 单次 schedule 上限 64 条，分批
+      const CHUNK = 60;
+      for (let i = 0; i < toSchedule.length; i += CHUNK) {
+        await LN.schedule({ notifications: toSchedule.slice(i, i + CHUNK) });
+      }
+    }
+    console.log(`[reminder] 已预约 ${toSchedule.length} 条原生通知`);
+  } catch (err) {
+    console.error('[reminder] 原生通知预约失败', err);
+  }
+}
+
+async function requestNativeNotificationPermission() {
+  if (!isNative() || !window.LocalNotifications) return false;
+  try {
+    const r = await window.LocalNotifications.requestPermissions();
+    return r.display === 'granted';
+  } catch (e) {
+    return false;
+  }
+}
+
 function startReminderService() {
-  requestNotificationPermission();
-  checkUpcomingCourses();
-  if (reminderInterval) clearInterval(reminderInterval);
-  reminderInterval = setInterval(checkUpcomingCourses, 60000);
+  if (isNative()) {
+    // 原生环境：用 LocalNotifications 提前预约，App 关了也能弹
+    (async () => {
+      const ok = await requestNativeNotificationPermission();
+      if (ok) {
+        await rescheduleNativeReminders();
+      } else {
+        showToast('未授予通知权限，提醒功能不可用');
+      }
+    })();
+    // 不再开启 setInterval —— 原生通知由系统时钟触发
+  } else {
+    // 浏览器环境：保留旧的 web Notification + setInterval 兜底
+    requestNotificationPermission();
+    checkUpcomingCourses();
+    if (reminderInterval) clearInterval(reminderInterval);
+    reminderInterval = setInterval(checkUpcomingCourses, 60000);
+  }
 }
 
 /* ===== Service Worker Registration ===== */

@@ -20,6 +20,17 @@ jobs:
       - name: Install npm deps
         run: npm install
 
+      - name: Bundle Capacitor plugins to www/vendor.js
+        run: |
+          # 用 esbuild 把 Capacitor 核心和 LocalNotifications 插件
+          # 打包成单文件 IIFE 给浏览器直接引入
+          npx esbuild vendor-entry.js \
+            --bundle \
+            --format=iife \
+            --target=es2019 \
+            --outfile=www/vendor.js \
+            --minify
+
       - name: Mirror root source to www/ (in case dev edited root files)
         run: |
           # 容错：如果开发者改的是根目录的 index.html / js / css，

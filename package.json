@@ -4,17 +4,20 @@
   "description": "",
   "main": "sw.js",
   "scripts": {
-    "build:android": "npx cap sync android && npx cap open android",
-    "sync": "npx cap sync android"
+    "build:vendor": "esbuild vendor-entry.js --bundle --format=iife --target=es2019 --outfile=www/vendor.js --minify",
+    "build:android": "npm run build:vendor && npx cap sync android && npx cap open android",
+    "sync": "npm run build:vendor && npx cap sync android"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "@capacitor/android": "^8.3.4",
     "@capacitor/cli": "^8.3.4",
     "@capacitor/core": "^8.3.4",
     "@capacitor/local-notifications": "^8.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0"
   }
 }
