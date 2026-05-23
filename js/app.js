@@ -219,6 +219,29 @@ function hideModal(modalEl) {
   document.body.style.overflow = '';
 }
 
+/* ===== Custom Confirm Dialog ===== */
+function showConfirm(msg) {
+  return new Promise((resolve) => {
+    $('#confirm-msg').textContent = msg;
+    const dialog = $('#confirm-dialog');
+    dialog.classList.add('show');
+
+    const cleanup = () => {
+      dialog.classList.remove('show');
+      $('#confirm-ok').removeEventListener('click', onOk);
+      $('#confirm-cancel').removeEventListener('click', onCancel);
+      document.querySelector('#confirm-backdrop').removeEventListener('click', onCancel);
+    };
+
+    const onOk = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+
+    $('#confirm-ok').addEventListener('click', onOk);
+    $('#confirm-cancel').addEventListener('click', onCancel);
+    document.querySelector('#confirm-backdrop').addEventListener('click', onCancel);
+  });
+}
+
 // Close modals on backdrop click
 $$('.modal-backdrop').forEach(bd => {
   bd.addEventListener('click', () => {
@@ -595,20 +618,23 @@ function escapeHtml(str) {
 }
 
 function confirmDelete(course) {
-  const confirmed = confirm(`确定要删除「${course.studentName}」的课程吗？\n${course.date} ${formatTime(course.time)}`);
-  if (confirmed) {
-    deleteCourse(course.id).then(() => {
-      showToast('课程已删除');
-      refreshCurrentView();
-    });
-  }
+  const msg = `确定要删除「${course.studentName}」的课程吗？\n${course.date} ${formatTime(course.time)}`;
+  showConfirm(msg).then(confirmed => {
+    if (confirmed) {
+      deleteCourse(course.id).then(() => {
+        showToast('课程已删除');
+        refreshCurrentView();
+      });
+    }
+  });
 }
 
 async function toggleCourseStatus(id) {
   const course = courses.find(c => c.id === id);
   if (!course) return;
   const newStatus = course.status === 'pending' ? 'completed' : 'pending';
-  if (!confirm(`确定将「${course.studentName}」的状态切换为「${statusText(newStatus)}」吗？`)) return;
+  const confirmed = await showConfirm(`确定将「${course.studentName}」的状态切换为「${statusText(newStatus)}」吗？`);
+  if (!confirmed) return;
   course.status = newStatus;
   await saveCourse(course);
   showToast(`状态已更新为「${statusText(course.status)}」`);
@@ -620,7 +646,8 @@ async function toggleCourseFeedback(id) {
   if (!course) return;
   const newState = !course.feedbackSent;
   const label = newState ? '反馈已发' : '反馈未发';
-  if (!confirm(`确定将「${course.studentName}」的反馈状态切换为「${label}」吗？`)) return;
+  const confirmed = await showConfirm(`确定将「${course.studentName}」的反馈状态切换为「${label}」吗？`);
+  if (!confirmed) return;
   course.feedbackSent = newState;
   await saveCourse(course);
   showToast(label);
@@ -811,14 +838,16 @@ function confirmDeleteStudent(student) {
   if (studentCourses.length > 0) {
     msg += `\n该学生的 ${studentCourses.length} 条课程记录也将一并删除。`;
   }
-  if (confirm(msg)) {
-    deleteStudentCourses(student).then(() => {
-      deleteStudent(student.id).then(() => {
-        showToast('学生及课程已删除');
-        renderStudentList();
+  showConfirm(msg).then(confirmed => {
+    if (confirmed) {
+      deleteStudentCourses(student).then(() => {
+        deleteStudent(student.id).then(() => {
+          showToast('学生及课程已删除');
+          renderStudentList();
+        });
       });
-    });
-  }
+    }
+  });
 }
 
 async function deleteStudentCourses(student) {
