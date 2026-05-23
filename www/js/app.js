@@ -979,7 +979,7 @@ function renderWeekView() {
         mark.textContent = '+';
         mark.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          quickAddCourse(parseInt(slot.dataset.day), slot.dataset.time, slot.dataset.dow);
+          quickAddCourse(parseInt(slot.dataset.day), slot.dataset.time, slot.dataset.dow, 60);
         });
         slot.appendChild(mark);
       });
@@ -988,6 +988,77 @@ function renderWeekView() {
     }
 
     body.appendChild(row);
+  }
+
+  // Long-press multi-select for quick add
+  let selectTimer = null;
+  let selectActive = false;
+  let selectStartSlot = null;
+  let selectDay = null;
+  let selectStartTime = null;
+  let selectEndTime = null;
+
+  body.addEventListener('touchstart', (e) => {
+    const slot = e.target.closest('.tt-slot');
+    if (!slot || slot.querySelector('.tt-course')) return;
+    selectStartSlot = slot;
+    selectDay = parseInt(slot.dataset.day);
+    selectStartTime = slot.dataset.time;
+    selectEndTime = slot.dataset.time;
+    clearTimeout(selectTimer);
+    selectTimer = setTimeout(() => {
+      selectActive = true;
+      clearSelection();
+      highlightSlot(slot);
+    }, 500);
+  }, { passive: false });
+
+  body.addEventListener('touchmove', (e) => {
+    if (!selectActive) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const slot = el ? el.closest('.tt-slot') : null;
+    if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === selectDay) {
+      selectEndTime = slot.dataset.time;
+      clearSelection();
+      // Highlight all slots from start to current
+      const rows = body.querySelectorAll('.timetable-row');
+      let inRange = false;
+      rows.forEach(r => {
+        const s = r.children[selectStartSlot.dataset.dow + 1];
+        if (s === selectStartSlot) inRange = true;
+        if (s === slot) { highlightSlot(s); inRange = false; }
+        else if (inRange) highlightSlot(s);
+      });
+    }
+  }, { passive: false });
+
+  body.addEventListener('touchend', (e) => {
+    clearTimeout(selectTimer);
+    if (!selectActive) return;
+    selectActive = false;
+    const selectedSlots = body.querySelectorAll('.tt-slot-selected');
+    if (selectedSlots.length > 1 && selectDay !== null) {
+      // Calculate duration from first to last+1 slot
+      const lastSlot = selectedSlots[selectedSlots.length - 1];
+      const endTimeForCalc = calculateEndTime(lastSlot.dataset.time, 60);
+      const [sh, sm] = selectStartTime.split(':').map(Number);
+      const [eh, em] = endTimeForCalc.split(':').map(Number);
+      const duration = (eh * 60 + em) - (sh * 60 + sm);
+      quickAddCourse(selectDay, selectStartTime, selectStartSlot.dataset.dow, Math.max(duration, 15));
+    }
+    clearSelection();
+  });
+
+  function highlightSlot(slot) {
+    if (slot && !slot.querySelector('.tt-course')) {
+      slot.classList.add('tt-slot-selected');
+    }
+  }
+
+  function clearSelection() {
+    body.querySelectorAll('.tt-slot-selected').forEach(s => s.classList.remove('tt-slot-selected'));
   }
 
   // Lay out course blocks
@@ -1063,12 +1134,11 @@ document.addEventListener('click', (e) => {
   }
 });
 
-function quickAddCourse(targetDay, time, dowIdx) {
+function quickAddCourse(targetDay, time, dowIdx, duration) {
   if (students.length === 0) {
     showToast('请先在「学生」标签页添加学生');
     return;
   }
-  // Find the next date matching this day of week
   const now = new Date();
   const todayDow = now.getDay();
   let daysUntil = targetDay - todayDow;
@@ -1085,8 +1155,8 @@ function quickAddCourse(targetDay, time, dowIdx) {
   populateStudentSelect();
   $('#course-date').value = formatDate(targetDate);
   $('#course-time').value = time;
-  $('#course-duration').value = '60';
-  $('#course-fee').value = calcFee(60);
+  $('#course-duration').value = duration;
+  $('#course-fee').value = calcFee(duration);
   $('#course-status').value = 'pending';
   courseForm.dataset.mode = 'add';
   courseForm.dataset.feedbackSent = '0';
