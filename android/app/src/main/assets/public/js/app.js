@@ -1417,9 +1417,17 @@ function renderWeekView() {
   // key 格式："{dow}-{rowIdx}"，value 为 true
   const occupiedSlots = new Set();
 
+  // 当前显示这一周的日期范围（用于过滤课程，避免每周都显示同一节课）
+  const weekStartMs = currentWeekMonday.getTime();
+  const weekEndMs = weekStartMs + 7 * 24 * 60 * 60 * 1000;  // 不含周日24点之后
+
   courses.forEach(course => {
     if (course.status === 'cancelled') return;
     const cDate = new Date(course.date + 'T00:00:00');
+    // 只渲染本周内的课程！之前漏了这个判断导致每周同一星期都重复显示
+    const cMs = cDate.getTime();
+    if (cMs < weekStartMs || cMs >= weekEndMs) return;
+
     const dow = cDate.getDay();
     const colIdx = dayMap.indexOf(dow);
     if (colIdx < 0) return;
