@@ -1729,10 +1729,9 @@ function quickAddCourse(targetDay, time, dowIdx, duration) {
     return;
   }
   // Use the date from the currently displayed week
-  const dayMap = [0, 1, 2, 3, 4, 5, 6]; // getDay values for our columns
-  const targetDow = dayMap[dowIdx];
+  const idx = parseInt(dowIdx) || 0;   // 强制转数字！之前是字符串导致日期拼接跳到几个月后
   const weekDate = new Date(currentWeekMonday);
-  weekDate.setDate(weekDate.getDate() + dowIdx);
+  weekDate.setDate(weekDate.getDate() + idx);
   const targetDate = formatDate(weekDate);
 
   populateStudentSelect();
