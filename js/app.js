@@ -1038,9 +1038,54 @@ function renderWeekView() {
     clearTimeout(selectTimer);
     if (!selectActive) return;
     selectActive = false;
+    finishMultiSelect();
+  });
+
+  // Mouse events for desktop
+  body.addEventListener('mousedown', (e) => {
+    const slot = e.target.closest('.tt-slot');
+    if (!slot || slot.querySelector('.tt-course')) return;
+    if (e.target.closest('.tt-add-mark')) return;
+    selectStartSlot = slot;
+    selectDay = parseInt(slot.dataset.day);
+    selectStartTime = slot.dataset.time;
+    selectEndTime = slot.dataset.time;
+    clearTimeout(selectTimer);
+    selectTimer = setTimeout(() => {
+      selectActive = true;
+      clearSelection();
+      highlightSlot(slot);
+    }, 400);
+  });
+
+  body.addEventListener('mousemove', (e) => {
+    if (!selectActive) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const slot = el ? el.closest('.tt-slot') : null;
+    if (slot && !slot.querySelector('.tt-course') && parseInt(slot.dataset.day) === selectDay) {
+      selectEndTime = slot.dataset.time;
+      clearSelection();
+      const rows = body.querySelectorAll('.timetable-row');
+      let inRange = false;
+      rows.forEach(r => {
+        const s = r.children[parseInt(selectStartSlot.dataset.dow) + 1];
+        if (s === selectStartSlot) inRange = true;
+        if (s === slot) { highlightSlot(s); inRange = false; }
+        else if (inRange && s && !s.querySelector('.tt-course')) highlightSlot(s);
+      });
+    }
+  });
+
+  document.addEventListener('mouseup', () => {
+    clearTimeout(selectTimer);
+    if (!selectActive) return;
+    selectActive = false;
+    finishMultiSelect();
+  });
+
+  function finishMultiSelect() {
     const selectedSlots = body.querySelectorAll('.tt-slot-selected');
     if (selectedSlots.length > 1 && selectDay !== null) {
-      // Calculate duration from first to last+1 slot
       const lastSlot = selectedSlots[selectedSlots.length - 1];
       const endTimeForCalc = calculateEndTime(lastSlot.dataset.time, 60);
       const [sh, sm] = selectStartTime.split(':').map(Number);
@@ -1049,7 +1094,7 @@ function renderWeekView() {
       quickAddCourse(selectDay, selectStartTime, selectStartSlot.dataset.dow, Math.max(duration, 15));
     }
     clearSelection();
-  });
+  }
 
   function highlightSlot(slot) {
     if (slot && !slot.querySelector('.tt-course')) {
