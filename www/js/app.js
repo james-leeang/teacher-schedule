@@ -292,6 +292,47 @@ function openBottomSheet(title, options, currentValue, callback) {
   bsCallback = callback;
 }
 
+// 周视图长按课程块时弹出的操作菜单：编辑/标记完成/删除
+function showCourseActionMenu(course) {
+  bsTitle.textContent = `${course.studentName} · ${course.date} ${formatTime(course.time)}`;
+  bsOptions.innerHTML = '';
+  const actions = [
+    { value: 'edit',     label: '✏️  编辑课程',     color: '' },
+    course.status === 'completed'
+      ? { value: 'mark-pending',   label: '↩️  标记为待上课',  color: '' }
+      : { value: 'mark-completed', label: '✅  标记为已完成',  color: '' },
+    { value: 'delete',   label: '🗑️  删除课程',     color: 'danger' }
+  ];
+  actions.forEach(act => {
+    const div = document.createElement('div');
+    div.className = 'bs-option' + (act.color === 'danger' ? ' bs-option-danger' : '');
+    div.innerHTML = `<span>${act.label}</span>`;
+    div.addEventListener('click', () => {
+      bottomSheet.classList.remove('show');
+      handleCourseAction(course, act.value);
+    });
+    bsOptions.appendChild(div);
+  });
+  bottomSheet.classList.add('show');
+  bsCallback = null;
+}
+
+async function handleCourseAction(course, action) {
+  const c = courses.find(co => co.id === course.id);
+  if (!c) return;
+  if (action === 'edit') {
+    openCourseForm(c);
+  } else if (action === 'delete') {
+    confirmDelete(c);
+  } else if (action === 'mark-completed' || action === 'mark-pending') {
+    const newStatus = action === 'mark-completed' ? 'completed' : 'pending';
+    c.status = newStatus;
+    await saveCourse(c);
+    showToast(action === 'mark-completed' ? '已标记为完成' : '已标记为待上课');
+    refreshCurrentView();
+  }
+}
+
 function createCustomSelect(selectEl, title) {
   // 防止重复包装：如果已经有 custom-select 兄弟节点，直接跳过
   if (selectEl.parentNode.querySelector('.custom-select')) return;
@@ -536,7 +577,8 @@ courseForm.addEventListener('submit', async (e) => {
 
   try {
     for (let i = 0; i < repeatWeeks; i++) {
-      const d = new Date(baseDate);
+      // 强制本地时间解析，避免 WebView 不同时区下把 "2025-05-24" 当成 UTC 偏移到上一天
+      const d = new Date(baseDate + 'T00:00:00');
       d.setDate(d.getDate() + i * 7);
       const dateStr = formatDate(d);
       const courseData = {
@@ -1450,22 +1492,77 @@ function renderWeekView() {
     }
 
     const colors = studentColors[course.studentId] || { bg: '#E3F2FD', text: '#1565C0' };
+    const isCompleted = course.status === 'completed';
     const block = document.createElement('div');
-    block.className = 'tt-course';
+    block.className = 'tt-course' + (isCompleted ? ' tt-course-done' : '');
     block.dataset.courseId = course.id;
-    block.style.background = colors.bg;
-    block.style.color = colors.text;
+    if (isCompleted) {
+      // 已完成课程统一灰色，区分于待上课的彩色块
+      block.style.background = '#E8E8E8';
+      block.style.color = '#888';
+    } else {
+      block.style.background = colors.bg;
+      block.style.color = colors.text;
+    }
     block.style.left = (leftPx + 2) + 'px';
     block.style.top = topPx + 'px';
     block.style.width = (colWidth - 4) + 'px';
     block.style.height = (heightPx - 2) + 'px';
     block.title = `${course.studentName} ${course.time}-${calculateEndTime(course.time, course.duration)}`;
     block.innerHTML = `<span class="tt-course-name">${escapeHtml(course.studentName)}</span><span class="tt-course-time">${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}</span>`;
+
+    // 长按计时器：长按 500ms 后弹出操作菜单（编辑/标记完成/删除）
+    let pressTimer = null;
+    let pressX = 0, pressY = 0;
+    let pressMoved = false;
+
+    const startPress = (x, y) => {
+      pressMoved = false;
+      pressX = x; pressY = y;
+      clearTimeout(pressTimer);
+      pressTimer = setTimeout(() => {
+        if (pressMoved) return;
+        if (navigator.vibrate) navigator.vibrate(20);
+        showCourseActionMenu(course);
+        pressTimer = null;
+      }, 500);
+    };
+    const movePress = (x, y) => {
+      if (Math.abs(x - pressX) > 8 || Math.abs(y - pressY) > 8) {
+        pressMoved = true;
+        clearTimeout(pressTimer);
+      }
+    };
+    const cancelPress = () => {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    };
+
+    block.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      startPress(t.clientX, t.clientY);
+    }, { passive: true });
+    block.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      movePress(t.clientX, t.clientY);
+    }, { passive: true });
+    block.addEventListener('touchend', cancelPress);
+    block.addEventListener('touchcancel', cancelPress);
+
+    block.addEventListener('mousedown', (e) => startPress(e.clientX, e.clientY));
+    block.addEventListener('mousemove', (e) => movePress(e.clientX, e.clientY));
+    block.addEventListener('mouseup', cancelPress);
+    block.addEventListener('mouseleave', cancelPress);
+
     block.addEventListener('click', (e) => {
       e.stopPropagation();
+      // 长按弹出菜单时，pressTimer 已为 null（说明已触发），此时不要再走编辑
+      // 短按（pressTimer 还没到时间被 touchend 清掉）会走这里
+      if (pressMoved) return;
       const c = courses.find(co => co.id === course.id);
       if (c) openCourseForm(c);
     });
+
     body.appendChild(block);
   });
 
@@ -1605,7 +1702,15 @@ sortOrder.addEventListener('change', () => {
 /* ===== Refresh Helper ===== */
 function refreshCurrentView() {
   if (currentView === 'list') renderCourseList();
-  else if (currentView === 'calendar') { renderCalendar(); if (selectedDay) renderDayCourses(selectedDay); }
+  else if (currentView === 'calendar') {
+    // 日历视图同时刷新月视图和周视图，根据当前激活的子视图
+    if (calViewMode === 'week') {
+      renderWeekView();
+    } else {
+      renderCalendar();
+      if (selectedDay) renderDayCourses(selectedDay);
+    }
+  }
   else if (currentView === 'stats') renderStats();
   else if (currentView === 'student') { if (selectedStudentId) renderStudentCourseList(); else renderStudentList(); }
 }

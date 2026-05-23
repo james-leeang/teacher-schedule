@@ -698,6 +698,14 @@ button, input, textarea, select {
   box-shadow: 0 2px 6px rgba(0,0,0,0.15);
 }
 
+/* 已完成的课程：灰色 + 课程名划掉，让用户一眼区分本周已上 vs 待上 */
+.tt-course-done .tt-course-name {
+  text-decoration: line-through;
+}
+.tt-course-done {
+  opacity: 0.7;
+}
+
 .tt-course .tt-course-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1243,6 +1251,14 @@ button, input, textarea, select {
 .bs-option.selected {
   color: var(--primary);
   font-weight: 500;
+}
+
+/* 危险操作（删除等）的 BottomSheet 选项 */
+.bs-option-danger {
+  color: #d33;
+}
+.bs-option-danger:active {
+  background: #fff0f0;
 }
 
 /* ===== Custom Select Trigger ===== */

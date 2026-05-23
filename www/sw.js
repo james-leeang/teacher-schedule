@@ -1,5 +1,5 @@
 // 版本号：每次发版递增。CACHE_NAME 变了之后 activate 阶段会自动清理旧缓存
-const CACHE_NAME = 'teacher-schedule-v3';
+const CACHE_NAME = 'teacher-schedule-v4';
 const ASSETS = [
   'index.html',
   'css/style.css',
