@@ -292,7 +292,7 @@ function openBottomSheet(title, options, currentValue, callback) {
   bsCallback = callback;
 }
 
-// 周视图长按课程块时弹出的操作菜单：编辑/标记完成/删除
+// 周视图长按课程块时弹出的操作菜单：编辑/标记完成/改时间/删除
 function showCourseActionMenu(course) {
   bsTitle.textContent = `${course.studentName} · ${course.date} ${formatTime(course.time)}`;
   bsOptions.innerHTML = '';
@@ -301,6 +301,7 @@ function showCourseActionMenu(course) {
     course.status === 'completed'
       ? { value: 'mark-pending',   label: '↩️  标记为待上课',  color: '' }
       : { value: 'mark-completed', label: '✅  标记为已完成',  color: '' },
+    { value: 'move',     label: '📐  改时间（点击新位置）',  color: '' },
     { value: 'delete',   label: '🗑️  删除课程',     color: 'danger' }
   ];
   actions.forEach(act => {
@@ -317,6 +318,9 @@ function showCourseActionMenu(course) {
   bsCallback = null;
 }
 
+// 待移动的课程 id（全局态，只允许一个进入拖动模式）
+let pendingMoveCourseId = null;
+
 async function handleCourseAction(course, action) {
   const c = courses.find(co => co.id === course.id);
   if (!c) return;
@@ -330,7 +334,44 @@ async function handleCourseAction(course, action) {
     await saveCourse(c);
     showToast(action === 'mark-completed' ? '已标记为完成' : '已标记为待上课');
     refreshCurrentView();
+  } else if (action === 'move') {
+    pendingMoveCourseId = c.id;
+    showToast('请点击新的时间位置');
+    refreshCurrentView();   // 重渲，让课程块带上虚线"待移动"样式
   }
+}
+
+// 把指定课程移到新的(date, time)
+async function moveCourseTo(courseId, newDate, newTime) {
+  const c = courses.find(co => co.id === courseId);
+  if (!c) return;
+  // 冲突检测
+  const [bh, bm] = newTime.split(':').map(Number);
+  const newStart = bh * 60 + bm;
+  const newEnd = newStart + (c.duration || 60);
+  const conflict = courses.find(co => {
+    if (co.id === courseId) return false;
+    if (co.status === 'cancelled') return false;
+    if (co.date !== newDate) return false;
+    const [ch, cm] = co.time.split(':').map(Number);
+    const cStart = ch * 60 + cm;
+    const cEnd = cStart + (co.duration || 60);
+    return newStart < cEnd && newEnd > cStart;
+  });
+  if (conflict) {
+    const ok = await showConfirm(`${newDate} ${newTime} 与 ${conflict.studentName} 的课程冲突，仍要移过去吗？`);
+    if (!ok) {
+      pendingMoveCourseId = null;
+      refreshCurrentView();
+      return;
+    }
+  }
+  c.date = newDate;
+  c.time = newTime;
+  await saveCourse(c);
+  pendingMoveCourseId = null;
+  showToast('课程已移动');
+  refreshCurrentView();
 }
 
 function createCustomSelect(selectEl, title) {
@@ -574,6 +615,35 @@ courseForm.addEventListener('submit', async (e) => {
   const baseStatus = $('#course-status').value;
   const baseNotes = $('#course-notes').value;
   const fbSent = courseForm.dataset.feedbackSent === '1';
+
+  // 冲突检测：检查所有要添加的日期是否和已有课程时间重叠
+  const editingId = courseForm.dataset.mode === 'edit' ? courseIdInput.value : null;
+  const conflicts = [];
+  for (let i = 0; i < repeatWeeks; i++) {
+    const d = new Date(baseDate + 'T00:00:00');
+    d.setDate(d.getDate() + i * 7);
+    const dateStr = formatDate(d);
+    const [bh, bm] = baseTime.split(':').map(Number);
+    const newStart = bh * 60 + bm;
+    const newEnd = newStart + duration;
+    courses.forEach(c => {
+      if (c.id === editingId) return;      // 编辑模式跳过自己
+      if (c.status === 'cancelled') return; // 已取消的不算冲突
+      if (c.date !== dateStr) return;
+      const [ch, cm] = c.time.split(':').map(Number);
+      const cStart = ch * 60 + cm;
+      const cEnd = cStart + (c.duration || 60);
+      // 区间重叠判断
+      if (newStart < cEnd && newEnd > cStart) {
+        conflicts.push(`${dateStr} ${c.time} ${c.studentName}`);
+      }
+    });
+  }
+  if (conflicts.length > 0) {
+    const msg = `检测到时间冲突：\n${conflicts.slice(0, 3).join('\n')}${conflicts.length > 3 ? `\n…还有 ${conflicts.length - 3} 条` : ''}\n\n仍要保存吗？`;
+    const ok = await showConfirm(msg);
+    if (!ok) return;
+  }
 
   try {
     for (let i = 0; i < repeatWeeks; i++) {
@@ -1221,14 +1291,22 @@ function renderWeekView() {
       slot.dataset.row = rowNum;
 
       slot.addEventListener('click', (e) => {
-        // 1. 该格已有课程块根节点 → 不能添加
-        const existing = slot.querySelector('.tt-course');
-        if (existing) return;
-        // 2. 该格被其他跨格课程覆盖 → 也不能添加
+        // 1. 该格被其他跨格课程覆盖 → 不能添加也不能作为移动目标
         const occ = body.__occupiedSlots;
         if (occ && occ.has(`${d}-${rowNum - 1}`)) return;
 
-        // Remove other + marks
+        // 2. 如果有待移动的课程，把它移到这一格
+        if (pendingMoveCourseId) {
+          const dowIdx = parseInt(slot.dataset.dow);
+          const weekDate = new Date(currentWeekMonday);
+          weekDate.setDate(weekDate.getDate() + dowIdx);
+          const newDate = formatDate(weekDate);
+          const newTime = slot.dataset.time;
+          moveCourseTo(pendingMoveCourseId, newDate, newTime);
+          return;
+        }
+
+        // 3. 正常添加流程：显示"+"占位
         body.querySelectorAll('.tt-add-mark').forEach(m => m.remove());
         const mark = document.createElement('div');
         mark.className = 'tt-add-mark';
@@ -1493,11 +1571,13 @@ function renderWeekView() {
 
     const colors = studentColors[course.studentId] || { bg: '#E3F2FD', text: '#1565C0' };
     const isCompleted = course.status === 'completed';
+    const isPendingMove = course.id === pendingMoveCourseId;
     const block = document.createElement('div');
-    block.className = 'tt-course' + (isCompleted ? ' tt-course-done' : '');
+    block.className = 'tt-course'
+      + (isCompleted ? ' tt-course-done' : '')
+      + (isPendingMove ? ' tt-course-moving' : '');
     block.dataset.courseId = course.id;
     if (isCompleted) {
-      // 已完成课程统一灰色，区分于待上课的彩色块
       block.style.background = '#E8E8E8';
       block.style.color = '#888';
     } else {
@@ -1556,9 +1636,14 @@ function renderWeekView() {
 
     block.addEventListener('click', (e) => {
       e.stopPropagation();
-      // 长按弹出菜单时，pressTimer 已为 null（说明已触发），此时不要再走编辑
-      // 短按（pressTimer 还没到时间被 touchend 清掉）会走这里
       if (pressMoved) return;
+      // 在"待移动"模式下点击任何课程块都取消移动模式
+      if (pendingMoveCourseId) {
+        pendingMoveCourseId = null;
+        showToast('已取消移动');
+        refreshCurrentView();
+        return;
+      }
       const c = courses.find(co => co.id === course.id);
       if (c) openCourseForm(c);
     });
@@ -1568,6 +1653,42 @@ function renderWeekView() {
 
   // 把"哪些 slot 被占用"信息存到 body 上，供点击/长按时查询
   body.__occupiedSlots = occupiedSlots;
+
+  // 本周概览：节数 + 已完成收入 + 预计总收入
+  const oldSummary = body.parentElement.parentElement.querySelector('.week-summary');
+  if (oldSummary) oldSummary.remove();
+  const weekCourses = courses.filter(c => {
+    if (c.status === 'cancelled') return false;
+    const cMs = new Date(c.date + 'T00:00:00').getTime();
+    return cMs >= weekStartMs && cMs < weekEndMs;
+  });
+  const totalCount = weekCourses.length;
+  const completedCount = weekCourses.filter(c => c.status === 'completed').length;
+  const actualIncome = weekCourses
+    .filter(c => c.status === 'completed')
+    .reduce((s, c) => s + (c.fee || 0), 0);
+  const plannedIncome = weekCourses.reduce((s, c) => s + (c.fee || 0), 0);
+  const summary = document.createElement('div');
+  summary.className = 'week-summary';
+  summary.innerHTML = `
+    <div class="ws-item">
+      <div class="ws-num">${totalCount}</div>
+      <div class="ws-label">本周课程</div>
+    </div>
+    <div class="ws-item">
+      <div class="ws-num">${completedCount}</div>
+      <div class="ws-label">已完成</div>
+    </div>
+    <div class="ws-item ws-money">
+      <div class="ws-num">¥${actualIncome.toFixed(0)}</div>
+      <div class="ws-label">已收入</div>
+    </div>
+    <div class="ws-item">
+      <div class="ws-num">¥${plannedIncome.toFixed(0)}</div>
+      <div class="ws-label">预计</div>
+    </div>
+  `;
+  body.parentElement.parentElement.appendChild(summary);
 
   // Legend
   const legend = document.createElement('div');
@@ -1688,6 +1809,169 @@ function renderStats() {
     `;
     monthlyBreakdown.appendChild(div);
   });
+
+  // 绘制本月每日柱状图（纯 Canvas，不引第三方库）
+  drawMonthChart();
+}
+
+// 在 stats canvas 上画本月每日已完成收入的柱状图
+function drawMonthChart() {
+  const canvas = document.getElementById('stats-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  // 高 DPI 屏幕适配
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.clientWidth;
+  const cssHeight = 180;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+
+  // 聚合每天的已完成收入
+  const dayIncome = new Array(daysInMonth).fill(0);
+  courses.forEach(c => {
+    if (c.status !== 'completed') return;
+    if (!c.date.startsWith(prefix)) return;
+    const day = parseInt(c.date.substring(8, 10));
+    if (day >= 1 && day <= daysInMonth) dayIncome[day - 1] += (c.fee || 0);
+  });
+
+  const maxIncome = Math.max(...dayIncome, 1);
+  const padding = { left: 28, right: 8, top: 16, bottom: 24 };
+  const chartW = cssWidth - padding.left - padding.right;
+  const chartH = cssHeight - padding.top - padding.bottom;
+  const barWidth = chartW / daysInMonth * 0.6;
+  const barGap = chartW / daysInMonth * 0.4;
+
+  // 主题色
+  const isDark = document.documentElement.dataset.theme === 'dark';
+  const primary = '#4A90D9';
+  const muted = isDark ? '#888' : '#999';
+
+  // Y 轴 3 条参考线
+  ctx.strokeStyle = isDark ? '#333' : '#eee';
+  ctx.lineWidth = 1;
+  ctx.font = '10px system-ui';
+  ctx.fillStyle = muted;
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 3; i++) {
+    const y = padding.top + chartH - (chartH * i / 3);
+    ctx.beginPath();
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(padding.left + chartW, y);
+    ctx.stroke();
+    const val = Math.round(maxIncome * i / 3);
+    ctx.fillText(val ? '¥' + val : '0', padding.left - 4, y + 3);
+  }
+
+  // 柱子
+  ctx.fillStyle = primary;
+  const today = now.getDate();
+  for (let i = 0; i < daysInMonth; i++) {
+    const x = padding.left + (chartW / daysInMonth) * i + barGap / 2;
+    const h = (dayIncome[i] / maxIncome) * chartH;
+    const y = padding.top + chartH - h;
+    // 今天的柱子用深色突出
+    ctx.fillStyle = (i + 1 === today) ? '#357ABD' : primary;
+    ctx.fillRect(x, y, barWidth, h);
+  }
+
+  // X 轴标签：1、10、20、最后一天
+  ctx.fillStyle = muted;
+  ctx.textAlign = 'center';
+  const xLabels = [1, 10, 20, daysInMonth];
+  xLabels.forEach(d => {
+    const x = padding.left + (chartW / daysInMonth) * (d - 0.5);
+    ctx.fillText(String(d), x, cssHeight - 6);
+  });
+}
+
+/* ===== 数据备份导出 / 导入 ===== */
+async function exportData() {
+  if (!db) db = await openDB();
+  const allCourses = await dbGetAll(db, COURSE_STORE);
+  const allStudents = await dbGetAll(db, STUDENT_STORE);
+  const payload = {
+    appName: 'teacher-schedule',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    students: allStudents,
+    courses: allCourses
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const now = new Date();
+  const filename = `课程备份_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.json`;
+
+  // 优先用 Capacitor Filesystem + Share（APK 内）
+  const Cap = window.Capacitor;
+  if (Cap && Cap.Plugins && Cap.Plugins.Filesystem && Cap.Plugins.Share) {
+    try {
+      const fs = Cap.Plugins.Filesystem;
+      const share = Cap.Plugins.Share;
+      const result = await fs.writeFile({
+        path: filename,
+        data: json,
+        directory: 'CACHE',
+        encoding: 'utf8'
+      });
+      await share.share({
+        title: '课程数据备份',
+        url: result.uri,
+        dialogTitle: '保存或分享备份文件'
+      });
+      showToast('已生成备份文件');
+      return;
+    } catch (err) {
+      console.warn('Capacitor 导出失败，回退到浏览器下载', err);
+    }
+  }
+
+  // 浏览器/webview 兜底：blob 触发下载
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast('备份文件已下载');
+}
+
+async function importData(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (data.appName !== 'teacher-schedule' || !Array.isArray(data.courses) || !Array.isArray(data.students)) {
+      showToast('文件格式不正确');
+      return;
+    }
+    const ok = await showConfirm(
+      `即将导入 ${data.students.length} 个学生和 ${data.courses.length} 节课程。\n\n` +
+      `若与现有数据 ID 相同会被覆盖。是否继续？`
+    );
+    if (!ok) return;
+    if (!db) db = await openDB();
+    // 逐条 put（put 会覆盖同 id 的记录，不会删除其他数据）
+    for (const s of data.students) await dbPut(db, STUDENT_STORE, s);
+    for (const c of data.courses) await dbPut(db, COURSE_STORE, c);
+    await loadStudents();
+    await loadCourses();
+    refreshCurrentView();
+    showToast(`已导入 ${data.students.length} 学生 + ${data.courses.length} 课程`);
+  } catch (err) {
+    console.error('Import failed:', err);
+    showToast('导入失败：' + (err.message || '文件无效'));
+  }
 }
 
 /* ===== Filter/Sort Handlers ===== */
@@ -1747,8 +2031,7 @@ function checkUpcomingCourses() {
 
   const now = new Date();
   const nowTime = now.getTime();
-  // 用 localStorage 持久化"已提醒"标记，避免每次开 App 重新触发
-  // 旧的 sessionStorage 标记每次关闭 App 就丢失了，会重复打扰用户
+  // 用 localStorage 持久化"已提醒"标记
   const STORAGE_KEY = 'reminded_v2';
   let reminded = {};
   try {
@@ -1759,38 +2042,57 @@ function checkUpcomingCourses() {
   let dirty = false;
 
   courses.forEach(course => {
-    if (course.status !== 'pending') return;
+    if (course.status === 'cancelled') return;
 
     const courseDateTime = new Date(course.dateTime);
     const courseTime = courseDateTime.getTime();
     const diffMinutes = (courseTime - nowTime) / 60000;
 
-    // Reminder 1: Night before class day at 8:00 PM
-    if (diffMinutes > 0) {
+    // 提醒 1：前一晚 20:00（针对 pending 课程）
+    if (course.status === 'pending' && diffMinutes > 0) {
       const eveningKey = `evening_${course.id}_${course.date}`;
       if (!reminded[eveningKey]) {
         const eveningBefore = new Date(course.date + 'T20:00:00');
         eveningBefore.setDate(eveningBefore.getDate() - 1);
-        if (nowTime >= eveningBefore.getTime()) {
+        const eveningTime = eveningBefore.getTime();
+        // 已过该时间点 + 距离过去不超过 12 小时（防止过期太久还在补发）
+        if (nowTime >= eveningTime && (nowTime - eveningTime) < 12 * 60 * 60 * 1000) {
           sendNotification('📅 明天有课',
             `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}`);
+          reminded[eveningKey] = nowTime;
+          dirty = true;
+        } else if (nowTime >= eveningTime) {
+          // 过期了也标记一下，免得以后到了时间还在判断
           reminded[eveningKey] = nowTime;
           dirty = true;
         }
       }
     }
 
-    // Reminder 2: 1 hour before class
+    // 提醒 2：课前 1 小时（针对 pending 课程）
     const oneHourKey = `1h_${course.id}_${course.dateTime}`;
-    if (diffMinutes > 0 && diffMinutes <= 60 && !reminded[oneHourKey]) {
+    if (course.status === 'pending' && diffMinutes > 0 && diffMinutes <= 60 && !reminded[oneHourKey]) {
       sendNotification('⏰ 课程即将开始',
         `${course.studentName}\n${course.date} ${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}\n还有约${Math.round(diffMinutes)}分钟开始`);
       reminded[oneHourKey] = nowTime;
       dirty = true;
     }
+
+    // 提醒 3：反馈未发（课程结束 30 分钟后，状态非 cancelled 且 feedbackSent=false）
+    // 不限定 status，因为老师可能下课了忘了标已完成，但反馈是必须发的
+    const fbKey = `fb_${course.id}_${course.dateTime}`;
+    const endTimeMs = courseTime + (course.duration || 60) * 60000;
+    const minutesSinceEnd = (nowTime - endTimeMs) / 60000;
+    if (!course.feedbackSent && minutesSinceEnd >= 30 && minutesSinceEnd <= 24 * 60 && !reminded[fbKey]) {
+      // 距下课 30 分钟 ~ 24 小时之间没发反馈才提醒，过期太久就不推了
+      sendNotification('💬 该发反馈了',
+        `${course.studentName}\n${course.date} ${formatTime(course.time)} 这节课还没发反馈`);
+      reminded[fbKey] = nowTime;
+      dirty = true;
+    }
   });
 
-  // 清理 7 天以前的旧标记，防止 localStorage 无限增长
+  // 清理 7 天以前的旧标记
   const cutoff = nowTime - 7 * 24 * 60 * 60 * 1000;
   Object.keys(reminded).forEach(k => {
     if (reminded[k] < cutoff) {
@@ -1830,9 +2132,43 @@ async function initApp() {
     initAllCustomSelects();
     renderCourseList();
     startReminderService();
+    initExportImport();
+    initThemeToggle();
   } catch (err) {
     console.error('App init error:', err);
     showToast('数据加载失败，请刷新页面');
+  }
+}
+
+function initExportImport() {
+  const exportBtn = $('#btn-export-data');
+  const importBtn = $('#btn-import-data');
+  const fileInput = $('#file-import');
+  if (exportBtn) exportBtn.addEventListener('click', exportData);
+  if (importBtn) importBtn.addEventListener('click', () => fileInput.click());
+  if (fileInput) fileInput.addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (f) importData(f);
+    e.target.value = '';   // 允许重复选同一文件
+  });
+}
+
+function initThemeToggle() {
+  // 应用启动时读取上次保存的主题；默认跟随系统
+  const saved = localStorage.getItem('theme');
+  if (saved === 'dark' || saved === 'light') {
+    document.documentElement.dataset.theme = saved;
+  }
+  const btn = $('#btn-theme-toggle');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const cur = document.documentElement.dataset.theme;
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem('theme', next);
+      // 重绘统计图
+      if (currentView === 'stats') drawMonthChart();
+    });
   }
 }
 
