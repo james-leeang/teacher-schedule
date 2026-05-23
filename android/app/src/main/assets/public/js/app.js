@@ -911,8 +911,28 @@ $('#view-week-btn').addEventListener('click', () => {
   $('#cal-next').style.display = 'none';
   $('#cal-today').style.display = 'none';
   calMonthLabel.textContent = '一周课程安排';
-  renderWeekView();
+  initWeekView();
+  navigateWeek(0);
 });
+
+let currentWeekMonday = null;
+
+function initWeekView() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  currentWeekMonday = new Date(now);
+  currentWeekMonday.setDate(now.getDate() + diff);
+  currentWeekMonday.setHours(0, 0, 0, 0);
+}
+
+function navigateWeek(offset) {
+  currentWeekMonday.setDate(currentWeekMonday.getDate() + offset * 7);
+  renderWeekView();
+}
+
+$('#week-prev').addEventListener('click', () => navigateWeek(-1));
+$('#week-next').addEventListener('click', () => navigateWeek(1));
 
 function renderWeekView() {
   const body = $('#timetable-body');
@@ -924,6 +944,31 @@ function renderWeekView() {
   const START_HOUR = 7;
   const END_HOUR = 22;
   const slotMin = 60;
+
+  // Build week dates
+  const weekDates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(currentWeekMonday);
+    d.setDate(d.getDate() + i);
+    weekDates.push(d);
+  }
+  const weekEnd = new Date(currentWeekMonday);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+
+  // Update week range label
+  $('#week-range-label').textContent =
+    `${currentWeekMonday.getMonth() + 1}/${currentWeekMonday.getDate()} - ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
+
+  // Build header with dates
+  const header = $('#timetable-header');
+  const dayLabels = ['一', '二', '三', '四', '五', '六', '日'];
+  header.innerHTML = '<div class="th-time"></div>';
+  dayLabels.forEach((label, i) => {
+    const d = weekDates[i];
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    header.innerHTML += `<div class="th-day${isToday ? ' today' : ''}">${label}<span class="th-date">${d.getMonth() + 1}/${d.getDate()}</span></div>`;
+  });
 
   // Build student color map
   const studentColors = {};
@@ -1083,6 +1128,20 @@ function renderWeekView() {
     finishMultiSelect();
   });
 
+  // Swipe to navigate weeks
+  let swipeStartX = 0;
+  body.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.tt-course')) return;
+    swipeStartX = e.touches[0].clientX;
+  }, { passive: true });
+
+  body.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - swipeStartX;
+    if (Math.abs(dx) > 60 && !selectActive) {
+      navigateWeek(dx < 0 ? 1 : -1);
+    }
+  });
+
   function finishMultiSelect() {
     const selectedSlots = body.querySelectorAll('.tt-slot-selected');
     if (selectedSlots.length > 1 && selectDay !== null) {
@@ -1184,21 +1243,15 @@ function quickAddCourse(targetDay, time, dowIdx, duration) {
     showToast('请先在「学生」标签页添加学生');
     return;
   }
-  const now = new Date();
-  const todayDow = now.getDay();
-  let daysUntil = targetDay - todayDow;
-  if (daysUntil < 0) daysUntil += 7;
-  if (daysUntil === 0) {
-    const [h, m] = time.split(':').map(Number);
-    if (now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m)) {
-      daysUntil = 7;
-    }
-  }
-  const targetDate = new Date(now);
-  targetDate.setDate(now.getDate() + daysUntil);
+  // Use the date from the currently displayed week
+  const dayMap = [0, 1, 2, 3, 4, 5, 6]; // getDay values for our columns
+  const targetDow = dayMap[dowIdx];
+  const weekDate = new Date(currentWeekMonday);
+  weekDate.setDate(weekDate.getDate() + dowIdx);
+  const targetDate = formatDate(weekDate);
 
   populateStudentSelect();
-  $('#course-date').value = formatDate(targetDate);
+  $('#course-date').value = targetDate;
   $('#course-time').value = time;
   $('#course-duration').value = duration;
   $('#course-fee').value = calcFee(duration);

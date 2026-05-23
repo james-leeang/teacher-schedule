@@ -61,11 +61,13 @@
           <div id="calendar-grid" class="calendar-grid"></div>
         </div>
         <div id="week-view" style="display:none;">
+          <div class="week-nav-bar">
+            <button id="week-prev" class="week-nav-btn">&lt;</button>
+            <span id="week-range-label"></span>
+            <button id="week-next" class="week-nav-btn">&gt;</button>
+          </div>
           <div class="timetable-wrapper">
-            <div class="timetable-header">
-              <div class="th-time"></div>
-              <div class="th-day">一</div><div class="th-day">二</div><div class="th-day">三</div><div class="th-day">四</div><div class="th-day">五</div><div class="th-day">六</div><div class="th-day">日</div>
-            </div>
+            <div class="timetable-header" id="timetable-header"></div>
             <div class="timetable-scroll">
               <div class="timetable-body" id="timetable-body"></div>
             </div>

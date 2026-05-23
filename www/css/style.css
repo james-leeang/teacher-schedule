@@ -575,10 +575,32 @@ button, input, textarea, select {
 }
 
 /* ===== Timetable Week View ===== */
-.week-zoom-bar {
+.week-nav-bar {
   display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+
+.week-nav-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  border-radius: 50%;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+}
+
+#week-range-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .timetable-wrapper {
@@ -598,18 +620,30 @@ button, input, textarea, select {
 }
 
 .th-time {
-  height: 36px;
+  height: 44px;
 }
 
 .th-day {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  height: 36px;
+  font-size: 13px;
+  font-weight: 700;
+  height: 44px;
   border-left: 1px solid rgba(255,255,255,0.2);
+  gap: 1px;
+}
+
+.th-day .th-date {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.th-day.today {
+  background: rgba(255,255,255,0.18);
 }
 
 .timetable-scroll {
