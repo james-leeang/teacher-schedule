@@ -1010,6 +1010,10 @@ function renderDayCourses(dateStr) {
 }
 
 $('#cal-prev').addEventListener('click', () => {
+  if (calViewMode === 'week') {
+    navigateWeek(-1);
+    return;
+  }
   calendarMonth--;
   if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
   selectedDay = null;
@@ -1019,6 +1023,10 @@ $('#cal-prev').addEventListener('click', () => {
 });
 
 $('#cal-next').addEventListener('click', () => {
+  if (calViewMode === 'week') {
+    navigateWeek(1);
+    return;
+  }
   calendarMonth++;
   if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
   selectedDay = null;
@@ -1028,6 +1036,11 @@ $('#cal-next').addEventListener('click', () => {
 });
 
 $('#cal-today').addEventListener('click', () => {
+  if (calViewMode === 'week') {
+    initWeekView();         // 跳回本周
+    renderWeekView();
+    return;
+  }
   const now = new Date();
   calendarYear = now.getFullYear();
   calendarMonth = now.getMonth();
@@ -1057,10 +1070,10 @@ $('#view-week-btn').addEventListener('click', () => {
   $('#view-month-btn').classList.remove('active');
   $('#month-view').style.display = 'none';
   $('#week-view').style.display = 'block';
-  $('#cal-prev').style.display = 'none';
-  $('#cal-next').style.display = 'none';
-  $('#cal-today').style.display = 'none';
-  calMonthLabel.textContent = '一周课程安排';
+  // 周视图模式下保留左右按钮（用于切周）和"今天"按钮（跳回本周）
+  $('#cal-prev').style.display = '';
+  $('#cal-next').style.display = '';
+  $('#cal-today').style.display = '';
   initWeekView();
   navigateWeek(0);
 });
@@ -1103,8 +1116,8 @@ function renderWeekView() {
   const weekEnd = new Date(currentWeekMonday);
   weekEnd.setDate(weekEnd.getDate() + 6);
 
-  // Update week range label
-  $('#week-range-label').textContent =
+  // 把"周范围"写到顶部 cal-month-label（之前的独立 week-range-label 行已删除）
+  calMonthLabel.textContent =
     `${currentWeekMonday.getMonth() + 1}/${currentWeekMonday.getDate()} - ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
 
   // Build header with dates
@@ -1201,13 +1214,17 @@ function renderWeekView() {
     selectDay: null,
     selectStartTime: null,
     selectEndTime: null,
+    startX: 0,
+    startY: 0,
     swipeStartX: 0,
+    suppressNextClick: false,   // 长按多选完成后抑制后续 click，避免误触发 "+"
     bound: false
   });
 
   function isSlotOccupied(slot) {
     if (!slot) return true;
-    if (slot.querySelector('.tt-course')) return true;
+    // 课程块现在挂在 body 上而不是 slot 里，所以不能用 slot.querySelector
+    // 完全通过 __occupiedSlots 判断
     const occ = body.__occupiedSlots;
     if (occ) {
       const dow = parseInt(slot.dataset.dow);
@@ -1229,13 +1246,13 @@ function renderWeekView() {
 
   function finishMultiSelect() {
     const selectedSlots = body.querySelectorAll('.tt-slot-selected');
-    if (selectedSlots.length > 1 && ws.selectDay !== null) {
+    if (selectedSlots.length >= 1 && ws.selectDay !== null && ws.selectStartSlot) {
       const lastSlot = selectedSlots[selectedSlots.length - 1];
       const endTimeForCalc = calculateEndTime(lastSlot.dataset.time, 60);
       const [sh, sm] = ws.selectStartTime.split(':').map(Number);
       const [eh, em] = endTimeForCalc.split(':').map(Number);
       const duration = (eh * 60 + em) - (sh * 60 + sm);
-      quickAddCourse(ws.selectDay, ws.selectStartTime, ws.selectStartSlot.dataset.dow, Math.max(duration, 15));
+      quickAddCourse(ws.selectDay, ws.selectStartTime, ws.selectStartSlot.dataset.dow, Math.max(duration, 60));
     }
     clearSelection();
   }
@@ -1250,27 +1267,41 @@ function renderWeekView() {
       ws.selectDay = parseInt(slot.dataset.day);
       ws.selectStartTime = slot.dataset.time;
       ws.selectEndTime = slot.dataset.time;
+      ws.startX = e.touches[0].clientX;
+      ws.startY = e.touches[0].clientY;
       clearTimeout(ws.selectTimer);
       ws.selectTimer = setTimeout(() => {
         ws.selectActive = true;
         clearSelection();
         highlightSlot(slot);
-      }, 500);
-    }, { passive: false });
+        // 手机震动反馈，提示长按已激活
+        if (navigator.vibrate) navigator.vibrate(20);
+      }, 400);
+    }, { passive: true });
 
     body.addEventListener('touchmove', (e) => {
-      if (!ws.selectActive) return;
-      e.preventDefault();
       const touch = e.touches[0];
+      // 还没激活长按时：如果手指明显移动了，取消计时器（用户想滚动页面）
+      if (!ws.selectActive) {
+        const dx = Math.abs(touch.clientX - ws.startX);
+        const dy = Math.abs(touch.clientY - ws.startY);
+        if (dx > 8 || dy > 8) {
+          clearTimeout(ws.selectTimer);
+        }
+        return;
+      }
+      // 已激活长按多选：阻止页面滚动，跟踪手指
+      e.preventDefault();
       const el = document.elementFromPoint(touch.clientX, touch.clientY);
       const slot = el ? el.closest('.tt-slot') : null;
       if (slot && !isSlotOccupied(slot) && parseInt(slot.dataset.day) === ws.selectDay) {
         ws.selectEndTime = slot.dataset.time;
         clearSelection();
         const rows = body.querySelectorAll('.timetable-row');
+        const colIdx = parseInt(ws.selectStartSlot.dataset.dow) + 1;
         let inRange = false;
         rows.forEach(r => {
-          const s = r.children[parseInt(ws.selectStartSlot.dataset.dow) + 1];
+          const s = r.children[colIdx];
           if (s === ws.selectStartSlot) inRange = true;
           if (s === slot) { highlightSlot(s); inRange = false; }
           else if (inRange) highlightSlot(s);
@@ -1282,8 +1313,25 @@ function renderWeekView() {
       clearTimeout(ws.selectTimer);
       if (!ws.selectActive) return;
       ws.selectActive = false;
+      ws.suppressNextClick = true;   // 阻止接下来的 click 派发"+"
       finishMultiSelect();
+      setTimeout(() => { ws.suppressNextClick = false; }, 300);
     });
+
+    body.addEventListener('touchcancel', () => {
+      clearTimeout(ws.selectTimer);
+      ws.selectActive = false;
+      clearSelection();
+    });
+
+    // 全局 click 拦截器：长按多选刚结束的话，吃掉这次 click，避免 + 被误触发
+    body.addEventListener('click', (e) => {
+      if (ws.suppressNextClick) {
+        e.stopPropagation();
+        e.preventDefault();
+        ws.suppressNextClick = false;
+      }
+    }, true);   // capture 阶段
 
     // Mouse events for desktop
     body.addEventListener('mousedown', (e) => {
@@ -1294,6 +1342,8 @@ function renderWeekView() {
       ws.selectDay = parseInt(slot.dataset.day);
       ws.selectStartTime = slot.dataset.time;
       ws.selectEndTime = slot.dataset.time;
+      ws.startX = e.clientX;
+      ws.startY = e.clientY;
       clearTimeout(ws.selectTimer);
       ws.selectTimer = setTimeout(() => {
         ws.selectActive = true;
@@ -1303,16 +1353,22 @@ function renderWeekView() {
     });
 
     body.addEventListener('mousemove', (e) => {
-      if (!ws.selectActive) return;
+      if (!ws.selectActive) {
+        const dx = Math.abs(e.clientX - ws.startX);
+        const dy = Math.abs(e.clientY - ws.startY);
+        if (dx > 8 || dy > 8) clearTimeout(ws.selectTimer);
+        return;
+      }
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const slot = el ? el.closest('.tt-slot') : null;
       if (slot && !isSlotOccupied(slot) && parseInt(slot.dataset.day) === ws.selectDay) {
         ws.selectEndTime = slot.dataset.time;
         clearSelection();
         const rows = body.querySelectorAll('.timetable-row');
+        const colIdx = parseInt(ws.selectStartSlot.dataset.dow) + 1;
         let inRange = false;
         rows.forEach(r => {
-          const s = r.children[parseInt(ws.selectStartSlot.dataset.dow) + 1];
+          const s = r.children[colIdx];
           if (s === ws.selectStartSlot) inRange = true;
           if (s === slot) { highlightSlot(s); inRange = false; }
           else if (inRange && s && !isSlotOccupied(s)) highlightSlot(s);
@@ -1324,7 +1380,9 @@ function renderWeekView() {
       clearTimeout(ws.selectTimer);
       if (!ws.selectActive) return;
       ws.selectActive = false;
+      ws.suppressNextClick = true;
       finishMultiSelect();
+      setTimeout(() => { ws.suppressNextClick = false; }, 300);
     });
 
     // Swipe to navigate weeks
