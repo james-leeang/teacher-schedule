@@ -910,33 +910,16 @@ $('#view-week-btn').addEventListener('click', () => {
   renderWeekView();
 });
 
-let weekZoom = 60; // 60 or 30 minutes
-
-$('#zoom-60').addEventListener('click', () => {
-  weekZoom = 60;
-  $('#zoom-60').classList.add('active');
-  $('#zoom-30').classList.remove('active');
-  renderWeekView();
-});
-
-$('#zoom-30').addEventListener('click', () => {
-  weekZoom = 30;
-  $('#zoom-30').classList.add('active');
-  $('#zoom-60').classList.remove('active');
-  renderWeekView();
-});
-
 function renderWeekView() {
   const body = $('#timetable-body');
   body.innerHTML = '';
-  // Remove old legend
   const oldLegend = body.parentElement.parentElement.querySelector('.week-legend');
   if (oldLegend) oldLegend.remove();
 
   const HOUR_HEIGHT = 68;
   const START_HOUR = 7;
   const END_HOUR = 22;
-  const slotMin = weekZoom; // 60 or 30
+  const slotMin = 60;
 
   // Build student color map
   const studentColors = {};
@@ -959,38 +942,27 @@ function renderWeekView() {
 
   let rowNum = 0;
   for (let h = START_HOUR; h < END_HOUR; h++) {
-    for (let m = 0; m < 60; m += slotMin) {
-      rowNum++;
-      const tStart = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      const tEnd = slotMin === 30
-        ? (m === 0 ? `${String(h).padStart(2, '0')}:30` : `${String(h + 1).padStart(2, '0')}:00`)
-        : `${String(h + 1).padStart(2, '0')}:00`;
+    rowNum++;
+    const tStart = `${String(h).padStart(2, '0')}:00`;
+    const tEnd = `${String(h + 1).padStart(2, '0')}:00`;
 
-      const row = document.createElement('div');
-      row.className = 'timetable-row';
+    const row = document.createElement('div');
+    row.className = 'timetable-row';
 
-      // Time cell
-      const timeCell = document.createElement('div');
-      timeCell.className = 'tt-time';
-      const isHour = m === 0;
-      if (slotMin === 30) {
-        timeCell.innerHTML = isHour
-          ? `<span class="tt-num">${rowNum}</span><span class="tt-range">${tStart}</span>`
-          : `<span class="tt-range">${tStart}</span>`;
-      } else {
-        timeCell.innerHTML = `<span class="tt-num">${rowNum}</span><span class="tt-range">${tStart}-${tEnd}</span>`;
-      }
-      row.appendChild(timeCell);
+    // Time cell
+    const timeCell = document.createElement('div');
+    timeCell.className = 'tt-time';
+    timeCell.innerHTML = `<span class="tt-num">${rowNum}</span><span class="tt-range">${tStart}-${tEnd}</span>`;
+    row.appendChild(timeCell);
 
-      // 7 day columns
-      for (let d = 0; d < 7; d++) {
-        const slot = document.createElement('div');
-        slot.className = 'tt-slot';
-        row.appendChild(slot);
-      }
-
-      body.appendChild(row);
+    // 7 day columns
+    for (let d = 0; d < 7; d++) {
+      const slot = document.createElement('div');
+      slot.className = 'tt-slot';
+      row.appendChild(slot);
     }
+
+    body.appendChild(row);
   }
 
   // Lay out course blocks
