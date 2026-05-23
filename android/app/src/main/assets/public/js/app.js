@@ -2078,19 +2078,40 @@ function checkUpcomingCourses() {
       dirty = true;
     }
 
-    // 提醒 3：反馈未发（课程结束 30 分钟后，状态非 cancelled 且 feedbackSent=false）
-    // 不限定 status，因为老师可能下课了忘了标已完成，但反馈是必须发的
-    const fbKey = `fb_${course.id}_${course.dateTime}`;
-    const endTimeMs = courseTime + (course.duration || 60) * 60000;
-    const minutesSinceEnd = (nowTime - endTimeMs) / 60000;
-    if (!course.feedbackSent && minutesSinceEnd >= 30 && minutesSinceEnd <= 24 * 60 && !reminded[fbKey]) {
-      // 距下课 30 分钟 ~ 24 小时之间没发反馈才提醒，过期太久就不推了
-      sendNotification('💬 该发反馈了',
-        `${course.studentName}\n${course.date} ${formatTime(course.time)} 这节课还没发反馈`);
-      reminded[fbKey] = nowTime;
-      dirty = true;
-    }
+    // 提醒 3：反馈未发 —— 不在循环里推送，循环外聚合（见下方）
   });
+
+  // 反馈未发聚合提醒：每天 22:00 之后统一推一条，列出当天所有反馈未发的课程
+  // 不为每节课分别打扰，避免一晚上 N 个通知
+  (function feedbackReminderToday() {
+    const today = formatDate(now);
+    const fbDayKey = `fb_day_${today}`;
+    if (reminded[fbDayKey]) return;   // 今天已经推过
+
+    // 必须晚于 22:00
+    const tenPm = new Date(today + 'T22:00:00').getTime();
+    if (nowTime < tenPm) return;
+
+    // 收集今天所有反馈未发的课程
+    const pendingFb = courses.filter(c => {
+      if (c.status === 'cancelled') return false;
+      if (c.feedbackSent) return false;
+      if (c.date !== today) return false;
+      // 必须是已经下课的（开始时间 + duration 已过）
+      const courseEnd = new Date(c.dateTime).getTime() + (c.duration || 60) * 60000;
+      return nowTime >= courseEnd;
+    });
+
+    if (pendingFb.length === 0) return;
+
+    const names = pendingFb.map(c => `${c.studentName} ${formatTime(c.time)}`).join('\n');
+    const title = pendingFb.length === 1
+      ? '💬 该发反馈了'
+      : `💬 今天有 ${pendingFb.length} 节课反馈未发`;
+    sendNotification(title, names);
+    reminded[fbDayKey] = nowTime;
+    dirty = true;
+  })();
 
   // 清理 7 天以前的旧标记
   const cutoff = nowTime - 7 * 24 * 60 * 60 * 1000;
