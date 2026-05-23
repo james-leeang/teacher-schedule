@@ -927,12 +927,18 @@ $('#zoom-30').addEventListener('click', () => {
 });
 
 function renderWeekView() {
-  const weekGrid = $('#week-grid');
+  const body = $('#timetable-body');
+  body.innerHTML = '';
   // Remove old legend
-  const oldLegend = weekGrid.parentElement.querySelector('.week-legend');
+  const oldLegend = body.parentElement.parentElement.querySelector('.week-legend');
   if (oldLegend) oldLegend.remove();
-  weekGrid.innerHTML = '';
 
+  const HOUR_HEIGHT = 68;
+  const START_HOUR = 7;
+  const END_HOUR = 22;
+  const slotMin = weekZoom; // 60 or 30
+
+  // Build student color map
   const studentColors = {};
   const colorPalette = [
     '#E3F2FD', '#FCE4EC', '#E8F5E9', '#FFF3E0', '#F3E5F5',
@@ -944,7 +950,6 @@ function renderWeekView() {
     '#00695C', '#F57F17', '#4527A0', '#33691E', '#B71C1C',
     '#283593', '#BF360C', '#004D40', '#F9A825', '#4A148C'
   ];
-
   students.forEach((s, i) => {
     studentColors[s.id] = {
       bg: colorPalette[i % colorPalette.length],
@@ -952,69 +957,92 @@ function renderWeekView() {
     };
   });
 
-  // Generate time slots based on zoom level
-  const slots = [];
-  for (let h = 7; h <= 21; h++) {
-    slots.push(`${String(h).padStart(2, '0')}:00`);
-    if (weekZoom === 30) {
-      slots.push(`${String(h).padStart(2, '0')}:30`);
+  let rowNum = 0;
+  for (let h = START_HOUR; h < END_HOUR; h++) {
+    for (let m = 0; m < 60; m += slotMin) {
+      rowNum++;
+      const tStart = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      const tEnd = slotMin === 30
+        ? (m === 0 ? `${String(h).padStart(2, '0')}:30` : `${String(h + 1).padStart(2, '0')}:00`)
+        : `${String(h + 1).padStart(2, '0')}:00`;
+
+      const row = document.createElement('div');
+      row.className = 'timetable-row';
+
+      // Time cell
+      const timeCell = document.createElement('div');
+      timeCell.className = 'tt-time';
+      const isHour = m === 0;
+      if (slotMin === 30) {
+        timeCell.innerHTML = isHour
+          ? `<span class="tt-num">${rowNum}</span><span class="tt-range">${tStart}</span>`
+          : `<span class="tt-range">${tStart}</span>`;
+      } else {
+        timeCell.innerHTML = `<span class="tt-num">${rowNum}</span><span class="tt-range">${tStart}-${tEnd}</span>`;
+      }
+      row.appendChild(timeCell);
+
+      // 7 day columns
+      for (let d = 0; d < 7; d++) {
+        const slot = document.createElement('div');
+        slot.className = 'tt-slot';
+        row.appendChild(slot);
+      }
+
+      body.appendChild(row);
     }
   }
 
-  // Header row
-  let html = '<div class="week-header-cell"></div>';
-  const dayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-  dayLabels.forEach(d => {
-    html += `<div class="week-header-cell">${d}</div>`;
-  });
-  weekGrid.innerHTML = html;
+  // Lay out course blocks
+  const dayMap = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun matching getDay()
+  const rows = body.querySelectorAll('.timetable-row');
 
-  const weekDays = [1, 2, 3, 4, 5, 6, 0];
+  const totalMinutesStart = START_HOUR * 60;
+  const pxPerMinute = HOUR_HEIGHT / slotMin;
 
-  slots.forEach(timeSlot => {
-    const row = document.createElement('div');
-    row.className = 'week-time-cell';
-    const isHalf = weekZoom === 30 && timeSlot.endsWith(':30');
-    row.textContent = isHalf ? '' : timeSlot;
-    if (isHalf) row.style.fontSize = '9px';
-    weekGrid.appendChild(row);
+  courses.forEach(course => {
+    if (course.status === 'cancelled') return;
+    const cDate = new Date(course.date + 'T00:00:00');
+    const dow = cDate.getDay();
+    const colIdx = dayMap.indexOf(dow);
+    if (colIdx < 0) return;
 
-    const slotEnd = calculateEndTime(timeSlot, weekZoom);
+    const [ch, cm] = course.time.split(':').map(Number);
+    const startMin = ch * 60 + cm - totalMinutesStart;
+    const durationMin = course.duration;
+    if (startMin < 0) return;
 
-    weekDays.forEach(dayOfWeek => {
-      const cell = document.createElement('div');
-      cell.className = 'week-slot-cell';
-      if (isHalf) cell.style.minHeight = '20px';
+    // Find which row this course starts in
+    const rowIdx = Math.floor(startMin / slotMin);
+    const rowOffset = (startMin % slotMin) / slotMin * HOUR_HEIGHT;
+    const heightPx = Math.max(HOUR_HEIGHT * 0.3, (durationMin / slotMin) * HOUR_HEIGHT);
 
-      // Find courses that occupy this slot (including spanning)
-      const slotCourses = courses.filter(c => {
-        if (c.status === 'cancelled') return false;
-        const courseDate = new Date(c.date + 'T00:00:00');
-        if (courseDate.getDay() !== dayOfWeek) return false;
-        const courseEnd = calculateEndTime(c.time, c.duration);
-        const slotStart = timeSlot;
-        return (c.time >= slotStart && c.time < slotEnd) ||
-               (c.time <= slotStart && courseEnd > slotStart);
-      });
+    if (rowIdx >= 0 && rowIdx < rows.length) {
+      const slot = rows[rowIdx].children[colIdx + 1]; // +1 for time cell
+      if (!slot) return;
 
-      if (slotCourses.length > 0) {
-        const firstCourse = slotCourses[0];
-        const isStart = firstCourse.time === timeSlot;
-        const sid = firstCourse.studentId;
-        const colors = studentColors[sid] || { bg: '#E3F2FD', text: '#1565C0' };
-        cell.style.background = colors.bg;
-        cell.style.color = colors.text;
-        cell.style.fontWeight = '600';
-        cell.title = slotCourses.map(c =>
-          `${c.studentName} ${c.time}-${calculateEndTime(c.time, c.duration)}`
-        ).join('\n');
-        if (isStart) {
-          cell.textContent = slotCourses.map(c => c.studentName).join(',');
-        }
+      // Check if course block already exists at this position (merge)
+      const existing = slot.querySelector(`.tt-course[data-course-id="${course.id}"]`);
+      if (!existing) {
+        const colors = studentColors[course.studentId] || { bg: '#E3F2FD', text: '#1565C0' };
+        const block = document.createElement('div');
+        block.className = 'tt-course';
+        block.dataset.courseId = course.id;
+        block.style.background = colors.bg;
+        block.style.color = colors.text;
+        block.style.top = rowOffset + 'px';
+        block.style.height = heightPx + 'px';
+        block.style.zIndex = '3';
+        block.title = `${course.studentName} ${course.time}-${calculateEndTime(course.time, course.duration)}`;
+        block.innerHTML = `<span class="tt-course-name">${escapeHtml(course.studentName)}</span><span class="tt-course-time">${formatTime(course.time)}-${calculateEndTime(course.time, course.duration)}</span>`;
+        block.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const c = courses.find(co => co.id === course.id);
+          if (c) openCourseForm(c);
+        });
+        slot.appendChild(block);
       }
-
-      weekGrid.appendChild(cell);
-    });
+    }
   });
 
   // Legend
@@ -1028,7 +1056,7 @@ function renderWeekView() {
   if (students.length > 8) {
     legend.innerHTML += `<span style="font-size:10px;color:#999;">+${students.length - 8}人</span>`;
   }
-  weekGrid.parentElement.appendChild(legend);
+  body.parentElement.parentElement.appendChild(legend);
 }
 
 /* ===== Statistics View ===== */

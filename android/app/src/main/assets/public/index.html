@@ -65,7 +65,15 @@
             <button id="zoom-60" class="view-toggle-btn active">按小时</button>
             <button id="zoom-30" class="view-toggle-btn">按半小时</button>
           </div>
-          <div id="week-grid" class="week-grid"></div>
+          <div class="timetable-wrapper">
+            <div class="timetable-header">
+              <div class="th-time"></div>
+              <div class="th-day">一</div><div class="th-day">二</div><div class="th-day">三</div><div class="th-day">四</div><div class="th-day">五</div><div class="th-day">六</div><div class="th-day">日</div>
+            </div>
+            <div class="timetable-scroll">
+              <div class="timetable-body" id="timetable-body"></div>
+            </div>
+          </div>
         </div>
         <div id="day-courses" class="day-courses">
           <h3 id="day-courses-title">选择日期查看课程</h3>
