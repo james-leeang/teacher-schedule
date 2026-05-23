@@ -566,6 +566,12 @@ button, input, textarea, select {
 }
 
 /* ===== Week Grid ===== */
+.week-zoom-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
 .week-grid {
   display: grid;
   grid-template-columns: 55px repeat(7, 1fr);

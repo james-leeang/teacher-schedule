@@ -559,7 +559,7 @@ function renderStudentList() {
   students.sort((a, b) => a.name.localeCompare(b.name, 'zh')).forEach(student => {
     const studentCourses = getStudentCourses(student);
     const totalFee = studentCourses
-      .filter(c => c.status !== 'cancelled')
+      .filter(c => c.status === 'completed')
       .reduce((sum, c) => sum + (c.fee || 0), 0);
 
     const card = document.createElement('div');
@@ -910,8 +910,27 @@ $('#view-week-btn').addEventListener('click', () => {
   renderWeekView();
 });
 
+let weekZoom = 60; // 60 or 30 minutes
+
+$('#zoom-60').addEventListener('click', () => {
+  weekZoom = 60;
+  $('#zoom-60').classList.add('active');
+  $('#zoom-30').classList.remove('active');
+  renderWeekView();
+});
+
+$('#zoom-30').addEventListener('click', () => {
+  weekZoom = 30;
+  $('#zoom-30').classList.add('active');
+  $('#zoom-60').classList.remove('active');
+  renderWeekView();
+});
+
 function renderWeekView() {
   const weekGrid = $('#week-grid');
+  // Remove old legend
+  const oldLegend = weekGrid.parentElement.querySelector('.week-legend');
+  if (oldLegend) oldLegend.remove();
   weekGrid.innerHTML = '';
 
   const studentColors = {};
@@ -933,10 +952,13 @@ function renderWeekView() {
     };
   });
 
-  // 1-hour slots from 7:00 to 22:00
-  const hours = [];
+  // Generate time slots based on zoom level
+  const slots = [];
   for (let h = 7; h <= 21; h++) {
-    hours.push(`${String(h).padStart(2, '0')}:00`);
+    slots.push(`${String(h).padStart(2, '0')}:00`);
+    if (weekZoom === 30) {
+      slots.push(`${String(h).padStart(2, '0')}:30`);
+    }
   }
 
   // Header row
@@ -949,36 +971,46 @@ function renderWeekView() {
 
   const weekDays = [1, 2, 3, 4, 5, 6, 0];
 
-  hours.forEach(timeSlot => {
+  slots.forEach(timeSlot => {
     const row = document.createElement('div');
     row.className = 'week-time-cell';
-    row.textContent = timeSlot;
+    const isHalf = weekZoom === 30 && timeSlot.endsWith(':30');
+    row.textContent = isHalf ? '' : timeSlot;
+    if (isHalf) row.style.fontSize = '9px';
     weekGrid.appendChild(row);
+
+    const slotEnd = calculateEndTime(timeSlot, weekZoom);
 
     weekDays.forEach(dayOfWeek => {
       const cell = document.createElement('div');
       cell.className = 'week-slot-cell';
+      if (isHalf) cell.style.minHeight = '20px';
 
-      // Find courses starting in this hour slot
-      const slotEnd = calculateEndTime(timeSlot, 60);
+      // Find courses that occupy this slot (including spanning)
       const slotCourses = courses.filter(c => {
         if (c.status === 'cancelled') return false;
         const courseDate = new Date(c.date + 'T00:00:00');
         if (courseDate.getDay() !== dayOfWeek) return false;
         const courseEnd = calculateEndTime(c.time, c.duration);
-        return c.time >= timeSlot && c.time < slotEnd;
+        const slotStart = timeSlot;
+        return (c.time >= slotStart && c.time < slotEnd) ||
+               (c.time <= slotStart && courseEnd > slotStart);
       });
 
       if (slotCourses.length > 0) {
-        const sid = slotCourses[0].studentId;
+        const firstCourse = slotCourses[0];
+        const isStart = firstCourse.time === timeSlot;
+        const sid = firstCourse.studentId;
         const colors = studentColors[sid] || { bg: '#E3F2FD', text: '#1565C0' };
         cell.style.background = colors.bg;
         cell.style.color = colors.text;
         cell.style.fontWeight = '600';
-        cell.textContent = slotCourses.map(c => c.studentName).join(',');
         cell.title = slotCourses.map(c =>
           `${c.studentName} ${c.time}-${calculateEndTime(c.time, c.duration)}`
         ).join('\n');
+        if (isStart) {
+          cell.textContent = slotCourses.map(c => c.studentName).join(',');
+        }
       }
 
       weekGrid.appendChild(cell);
@@ -1005,7 +1037,7 @@ function renderStats() {
   const completed = courses.filter(c => c.status === 'completed').length;
   const pending = courses.filter(c => c.status === 'pending').length;
   const totalIncome = courses
-    .filter(c => c.status !== 'cancelled')
+    .filter(c => c.status === 'completed')
     .reduce((sum, c) => sum + (c.fee || 0), 0);
 
   $('#stat-total').textContent = total;
@@ -1018,7 +1050,7 @@ function renderStats() {
   const thisMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const monthCourses = courses.filter(c => c.date.startsWith(thisMonthPrefix));
   const monthIncome = monthCourses
-    .filter(c => c.status !== 'cancelled')
+    .filter(c => c.status === 'completed')
     .reduce((sum, c) => sum + (c.fee || 0), 0);
   const monthMinutes = monthCourses
     .filter(c => c.status === 'completed' || c.status === 'pending')
@@ -1037,8 +1069,8 @@ function renderStats() {
     }
     monthlyMap[monthKey].total++;
     if (c.status === 'completed') monthlyMap[monthKey].completed++;
-    if (c.status !== 'cancelled') monthlyMap[monthKey].income += (c.fee || 0);
-    if (c.status !== 'cancelled') monthlyMap[monthKey].minutes += (c.duration || 0);
+    if (c.status === 'completed') monthlyMap[monthKey].income += (c.fee || 0);
+    if (c.status === 'completed') monthlyMap[monthKey].minutes += (c.duration || 0);
   });
 
   const sortedMonths = Object.keys(monthlyMap).sort().reverse();
